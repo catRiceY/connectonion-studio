@@ -20,6 +20,8 @@ const state = {
   busy: new Set(),           // slugs with an action in flight
   drawerSlug: null,
   drawerDetail: null,
+  drawerSkills: null,        // { slug, is_co_ai, installed[], catalog[], running } for the open co-ai drawer
+  market: null,              // { catalog[], agents[] } for the Skills Market view
   statusSock: null,
   onboardingTimer: null,
   onboardingActive: false,
@@ -561,11 +563,17 @@ function initNav() {
   $('#settings-view').hidden = false;           // CSS visibility/transform drives it now
   app.appendChild($('#logs-view'));             // same for the logs view (fills the content pane)
   $('#logs-view').hidden = false;
+  app.appendChild($('#market-view'));           // and the Skills Market view (fills the content pane)
+  $('#market-view').hidden = false;
 
   // sidebar → Settings: toggle the content-pane settings (sidebar stays put); leaving Logs first
   const toggleInset = () => {
     if (app.classList.contains('is-settings')) closeSettingsModal();
-    else { if (app.classList.contains('is-logs')) closeLogsView(); openSettingsModal({ inset: true }); }
+    else {
+      if (app.classList.contains('is-logs')) closeLogsView();
+      if (app.classList.contains('is-market')) closeMarketView();
+      openSettingsModal({ inset: true });
+    }
   };
   $('#open-settings').addEventListener('click', toggleInset);
   $('#open-settings').addEventListener('keydown', (e) => {
@@ -580,6 +588,16 @@ function initNav() {
   $('#open-logs').addEventListener('click', toggleLogs);
   $('#open-logs').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLogs(); }
+  });
+
+  // sidebar → Skills: toggle the content-pane market
+  const toggleMarket = () => {
+    if (app.classList.contains('is-market')) closeMarketView();
+    else openMarketView();
+  };
+  $('#open-market').addEventListener('click', toggleMarket);
+  $('#open-market').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleMarket(); }
   });
   $('#logs-search').addEventListener('input', applyLogsFilter);   // filter the master list by name
   $('#logs-reveal').addEventListener('click', revealLogsFolder);
@@ -609,6 +627,7 @@ function initNav() {
   if (agentsNav) agentsNav.addEventListener('click', () => {
     if (app.classList.contains('is-settings')) closeSettingsModal();
     if (app.classList.contains('is-logs')) closeLogsView();
+    if (app.classList.contains('is-market')) closeMarketView();
   });
 
   // first-run gear → full-card settings (keeps its own top-right close gear)
@@ -775,6 +794,7 @@ function openLogsView() {
   const app = $('#app');
   const fromSettings = app.classList.contains('is-settings');
   if (app.classList.contains('is-detail')) closeDrawer();
+  if (app.classList.contains('is-market')) closeMarketView();
   renderLogs();
   app.classList.add('is-logs');
   setNav('logs');
@@ -1157,6 +1177,11 @@ function openCreateModal(stacked = false) {
     setTimeout(() => openCreateModal(stacked), 300);
     return;
   }
+  if ($('#app').classList.contains('is-market')) {   // same: crossfade back to Agents, then open the wizard
+    closeMarketView();
+    setTimeout(() => openCreateModal(stacked), 300);
+    return;
+  }
   $('#create-form').reset();
   $('#f-model-custom-wrap').hidden = true;
   syncTemplateFields();
@@ -1402,6 +1427,253 @@ function detailGroup(title, rows) {
   for (const [label, value] of rows) g.appendChild(setRow(label, value));
   return g;
 }
+const SKILL_CATEGORY_LABEL = {
+  'version-control': 'Version control',
+  'code-quality': 'Code quality',
+  'debug-understand': 'Debug & understand',
+  'delivery-ops': 'Delivery & ops',
+  'docs-security': 'Docs & security',
+};
+
+function skillCategoryLabel(cat) {
+  return SKILL_CATEGORY_LABEL[cat]
+    || String(cat || 'general').replace(/[-_]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// The per-agent "Skills" panel in the drawer (co-ai only) is READ-ONLY: it shows which skills the agent
+// has; adding/removing happens in the sidebar Skills Market. Renders from the state.drawerSkills cache.
+function skillsGroup(detail) {
+  if (detail.preset !== 'co-ai') return null;
+  const g = document.createElement('div');
+  g.className = 'detail-group d-skills';
+  const h = document.createElement('h3');
+  h.textContent = 'Skills';
+  g.appendChild(h);
+
+  const data = state.drawerSkills && state.drawerSkills.slug === detail.slug ? state.drawerSkills : null;
+  const note = document.createElement('p');
+  note.className = 'd-skills-note';
+  if (!data) {
+    note.textContent = 'Loading skills…';
+    g.appendChild(note);
+    return g;
+  }
+
+  const marketLink = document.createElement('a');
+  marketLink.className = 'd-skills-link';
+  marketLink.setAttribute('role', 'button');
+  marketLink.tabIndex = 0;
+  marketLink.textContent = 'Skills Market →';
+  marketLink.addEventListener('click', (e) => { e.stopPropagation(); openMarketView(); });
+
+  const installed = data.installed || [];
+  const titleByName = new Map((data.catalog || []).map((s) => [s.name, s.title]));
+  if (!installed.length) {
+    note.append('No skills yet — add some in the ', marketLink);
+    g.appendChild(note);
+    return g;
+  }
+  note.append(`${installed.length} installed · manage in the `, marketLink);
+  g.appendChild(note);
+
+  const chips = document.createElement('div');
+  chips.className = 'd-skill-chips';
+  for (const name of installed) {
+    const chip = document.createElement('span');
+    chip.className = 'd-skill-chip';
+    chip.textContent = titleByName.get(name) || name;
+    chips.appendChild(chip);
+  }
+  g.appendChild(chips);
+  return g;
+}
+
+// ---- Skills Market (sidebar view) -------------------------------------------------------
+function openMarketView() {
+  const app = $('#app');
+  if (app.classList.contains('is-detail')) closeDrawer();
+  if (app.classList.contains('is-logs')) closeLogsView();
+  if (app.classList.contains('is-settings')) closeSettingsModal();
+  app.classList.add('is-market');
+  setNav('skills');
+  renderMarket();
+}
+
+function closeMarketView() {
+  $('#app').classList.remove('is-market');
+  setNav('agents');
+}
+
+async function renderMarket(preloaded) {
+  const grid = $('#market-grid');
+  const empty = $('#market-empty');
+  if (preloaded) {
+    state.market = preloaded;
+  } else {
+    grid.replaceChildren();
+    try {
+      state.market = await api.getMarket();
+    } catch (err) {
+      empty.hidden = false;
+      empty.textContent = `Couldn't load the Skills Market: ${err.message}`;
+      return;
+    }
+  }
+  const catalog = state.market.catalog || [];
+  const agents = state.market.agents || [];
+  grid.replaceChildren();
+  if (!catalog.length) {
+    empty.hidden = false;
+    empty.textContent = 'No skills in the catalog.';
+    return;
+  }
+  empty.hidden = true;
+  for (const skill of catalog) grid.appendChild(skillCard(skill, agents));
+}
+
+function skillCard(skill, agents) {
+  const on = agents.filter((a) => (a.installed || []).includes(skill.name)).length;
+  const card = document.createElement('div');
+  card.className = 'skill-card';
+  card.dataset.name = skill.name;
+  const inner = document.createElement('div');
+  inner.className = 'skill-card-inner';
+
+  const front = document.createElement('div');
+  front.className = 'skill-card-face skill-card-front';
+  const cat = document.createElement('div');
+  cat.className = 'skill-cat';
+  cat.textContent = skillCategoryLabel(skill.category);
+  const title = document.createElement('div');
+  title.className = 'skill-title';
+  title.textContent = skill.title;
+  const desc = document.createElement('div');
+  desc.className = 'skill-desc';
+  desc.textContent = skill.description;
+  const foot = document.createElement('div');
+  foot.className = 'skill-foot';
+  const count = document.createElement('span');
+  count.className = 'skill-on-count';
+  count.textContent = on ? `On ${on} agent${on > 1 ? 's' : ''}` : 'Not installed';
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn btn-sm btn-primary skill-add';
+  addBtn.textContent = 'Add';
+  addBtn.addEventListener('click', () => card.classList.add('is-flipped'));
+  foot.append(count, addBtn);
+  front.append(cat, title, desc, foot);
+
+  const back = document.createElement('div');
+  back.className = 'skill-card-face skill-card-back';
+  back.appendChild(skillCardBack(skill, agents, card));
+
+  inner.append(front, back);
+  card.appendChild(inner);
+  return card;
+}
+
+function skillCardBack(skill, agents, card) {
+  const wrap = document.createElement('div');
+  wrap.className = 'skill-back';
+
+  const head = document.createElement('div');
+  head.className = 'skill-back-head';
+  const htitle = document.createElement('span');
+  htitle.className = 'skill-back-title';
+  htitle.textContent = 'Add to agents';
+  head.appendChild(htitle);
+  wrap.appendChild(head);
+
+  const list = document.createElement('div');
+  list.className = 'skill-agent-list';
+  if (!agents.length) {
+    const none = document.createElement('p');
+    none.className = 'skill-agent-none';
+    none.textContent = 'No co-ai agents yet — create one first.';
+    list.appendChild(none);
+  } else {
+    for (const a of agents) {
+      const isOn = (a.installed || []).includes(skill.name);
+      const row = document.createElement('div');
+      row.className = 'skill-agent-row' + (isOn ? ' is-installed' : '');
+      row.dataset.slug = a.slug;
+      const check = document.createElement('span');
+      check.className = 'skill-agent-check';
+      check.textContent = isOn ? '✓' : '';
+      const name = document.createElement('span');
+      name.className = 'skill-agent-name';
+      name.textContent = a.name;
+      row.append(check, name);
+      if (isOn) {
+        const badge = document.createElement('span');
+        badge.className = 'skill-agent-badge';
+        badge.textContent = 'installed';
+        row.appendChild(badge);
+      } else {
+        row.addEventListener('click', () => {
+          const checked = row.classList.toggle('is-checked');
+          check.textContent = checked ? '✓' : '';
+          updateSubmitCount(wrap);
+        });
+      }
+      list.appendChild(row);
+    }
+  }
+  wrap.appendChild(list);
+
+  const foot = document.createElement('div');
+  foot.className = 'skill-back-foot';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-sm btn-ghost';
+  cancel.textContent = 'Cancel';
+  cancel.addEventListener('click', () => card.classList.remove('is-flipped'));
+  const submit = document.createElement('button');
+  submit.type = 'button';
+  submit.className = 'btn btn-sm btn-primary skill-submit';
+  submit.textContent = 'Add to 0';
+  submit.disabled = true;
+  submit.addEventListener('click', () => submitSkill(skill, wrap));
+  foot.append(cancel, submit);
+  wrap.appendChild(foot);
+  return wrap;
+}
+
+function updateSubmitCount(backWrap) {
+  const n = backWrap.querySelectorAll('.skill-agent-row.is-checked').length;
+  const submit = backWrap.querySelector('.skill-submit');
+  submit.textContent = `Add to ${n}`;
+  submit.disabled = n === 0;
+}
+
+async function submitSkill(skill, backWrap) {
+  const slugs = [...backWrap.querySelectorAll('.skill-agent-row.is-checked')].map((r) => r.dataset.slug);
+  if (!slugs.length) return;
+  const submit = backWrap.querySelector('.skill-submit');
+  submit.disabled = true;
+  submit.textContent = 'Adding…';
+  try {
+    const res = await api.installBulk(skill.name, slugs);
+    const n = (res.installed || []).length;
+    const running = (res.agents || []).filter((a) => slugs.includes(a.slug) && a.running).length;
+    toast(`Added ${skill.title} to ${n} agent${n === 1 ? '' : 's'}${running ? ` · restart ${running} to apply` : ''}`);
+    renderMarket({ catalog: state.market.catalog, agents: res.agents || state.market.agents });
+  } catch (err) {
+    submit.disabled = false;
+    updateSubmitCount(backWrap);
+    toast(`Add failed: ${err.message}`, 'danger');
+  }
+}
+
+async function loadDrawerSkills(slug) {
+  try {
+    const data = await api.getAgentSkills(slug);
+    if (state.drawerSlug !== slug) return;
+    state.drawerSkills = { ...data, slug };
+    if (state.drawerDetail && state.drawerDetail.slug === slug) renderDrawerFields(state.drawerDetail);
+  } catch { /* leave the "Loading skills…" note; best-effort like the rest of the drawer */ }
+}
+
 function renderDrawerFields(detail) {
   $('#d-name').textContent = detail.name;
   const badge = $('#d-state');
@@ -1440,6 +1712,9 @@ function renderDrawerFields(detail) {
     ['ID', idValue(detail.address)],
     ['Created', detail.created_at || '—'],
   ]));
+
+  const skills = skillsGroup(detail);
+  if (skills) info.appendChild(skills);
 
   const errBox = $('#d-last-error');
   if (detail.last_error) { errBox.textContent = detail.last_error; errBox.hidden = false; }
@@ -1489,6 +1764,7 @@ async function refreshDrawerDetail() {
 async function openDrawer(slug, prefetched = null) {
   state.drawerSlug = slug;
   state.drawerDetail = null;
+  state.drawerSkills = null;
   closeAllCardMenus();
   $('#d-name').textContent = '…';
   $('#app').classList.add('is-detail');          // swap the detail in over the card
@@ -1500,11 +1776,13 @@ async function openDrawer(slug, prefetched = null) {
   if (!detail || state.drawerSlug !== slug) return;
   state.drawerDetail = detail;
   renderDrawerFields(detail);
+  if (detail.preset === 'co-ai') loadDrawerSkills(slug);
 }
 
 function closeDrawer() {
   state.drawerSlug = null;
   state.drawerDetail = null;
+  state.drawerSkills = null;
   $('#app').classList.remove('is-detail');
   resetDeleteButton();
 }
@@ -1980,6 +2258,7 @@ async function boot() {
     closeAllCardMenus();
     if ($('#app').classList.contains('is-settings')) closeSettingsModal();
     else if ($('#app').classList.contains('is-logs')) closeLogsView();
+    else if ($('#app').classList.contains('is-market')) closeMarketView();
     else if (!$('#modal-qr').hidden) $('#modal-qr').hidden = true;
     else if (!$('#modal-update').hidden) closeUpdateModal();
     else if ($('#app').classList.contains('is-creating')) closeCreateModal();

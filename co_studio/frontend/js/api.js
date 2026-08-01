@@ -54,6 +54,14 @@ export const renameAgent  = (slug, name) => request('POST', `${slugPath(slug)}/r
 export const deleteAgent  = (slug) => request('DELETE', slugPath(slug));
 export const revealLogs   = (slug) => request('POST', `${slugPath(slug)}/reveal-logs`);
 
+// -- skills store (co-ai agents) ------------------------------
+const skillPath = (slug) => `/api/skills/agent/${encodeURIComponent(slug)}`;
+export const getAgentSkills = (slug) => request('GET', skillPath(slug));
+export const installSkill   = (slug, name) => request('POST', `${skillPath(slug)}/install`, { name });
+export const uninstallSkill = (slug, name) => request('POST', `${skillPath(slug)}/uninstall`, { name });
+export const getMarket      = () => request('GET', '/api/skills/market');
+export const installBulk    = (name, slugs) => request('POST', '/api/skills/install-bulk', { name, slugs });
+
 // -- setup / settings -----------------------------------------
 export const setupStatus = () => request('GET', '/api/setup/status');
 export const updateStatus = () => request('GET', '/api/setup/update');

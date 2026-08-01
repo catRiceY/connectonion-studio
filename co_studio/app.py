@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import config, creator, registry, setup_check
-from .api import agents, settings_api, setup, ws
+from .api import agents, settings_api, setup, skills as skills_api, ws
 from .supervisor import SUPERVISOR
 
 
@@ -86,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api")
     app.include_router(setup.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+    app.include_router(skills_api.router, prefix="/api")
     app.include_router(ws.router)
 
     for sub in ("assets", "css", "js"):

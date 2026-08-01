@@ -108,6 +108,12 @@
           </span>
           <span class="nav-label">Logs</span>
         </a>
+        <a class="nav-item" id="open-market" data-view="skills" role="button" tabindex="0">
+          <span class="nav-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>
+          </span>
+          <span class="nav-label">Skills</span>
+        </a>
         <a class="nav-item" id="open-settings" data-view="settings" role="button" tabindex="0">
           <span class="nav-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -585,6 +591,20 @@
   </div>
 
   <!-- (4) agent detail — swaps in on the main card (relocated into #app by boot) -->
+  <div id="market-view" hidden>
+    <header class="content-head">
+      <div class="head-titles">
+        <h1>Skills Market</h1>
+        <p class="page-subtitle">Add coding skills to your co-ai agents — pick a skill, choose the agents, submit.</p>
+      </div>
+      <div class="head-actions"></div>
+    </header>
+    <div class="market-body">
+      <div id="market-grid" class="market-grid"></div>
+      <p id="market-empty" class="market-empty" hidden></p>
+    </div>
+  </div>
+
   <div id="detail-view" hidden>
     <aside class="detail-panel" role="group" aria-label="Agent detail">
       <header class="detail-head">

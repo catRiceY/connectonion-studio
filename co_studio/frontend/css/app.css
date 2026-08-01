@@ -1227,6 +1227,62 @@ body.shell-ready #app.is-detail .detail-panel { transition: transform 0.34s cubi
 .detail-group .set-row .v .row-copy { flex: none; }
 .detail-group .d-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; }
 
+/* Skills panel in the drawer — read-only (add/remove happens in the sidebar Skills Market) */
+.d-skills-note { margin: 8px 0 6px; font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.d-skills-link { color: var(--accent); font-weight: 600; cursor: pointer; white-space: nowrap; }
+.d-skills-link:hover { text-decoration: underline; }
+.d-skill-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 4px; }
+.d-skill-chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+
+/* ---- Skills Market (sidebar view) ---- */
+#market-view {
+  position: absolute; inset: 0 0 0 244px; z-index: 30;   /* 244px sidebar → fills the content pane */
+  background: var(--canvas); overflow: hidden;
+  display: flex; flex-direction: column;                  /* fixed content-head + scrollable body, like #logs-view */
+  opacity: 0; visibility: hidden; pointer-events: none;   /* toggled by #app.is-market */
+}
+#app.is-market #market-view { opacity: 1; visibility: visible; pointer-events: auto; }
+body.shell-ready #market-view { transition: opacity 0.3s ease, visibility 0s linear 0.3s; }
+body.shell-ready #app.is-market #market-view { transition: opacity 0.3s ease, visibility 0s; }
+.market-body { flex: 1 1 auto; overflow-y: auto; }
+.market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(248px, 1fr)); gap: 16px; padding: 18px 28px 28px; }  /* match the Agents grid */
+.market-empty { padding: 44px 28px; color: var(--ink-2); font-size: 13px; text-align: center; }
+
+/* flip card */
+.skill-card { perspective: 1200px; aspect-ratio: 1 / 1; }   /* same square footprint as .agent-card */
+.skill-card-inner { position: relative; width: 100%; height: 100%; transform-style: preserve-3d;
+  transition: transform 0.55s cubic-bezier(0.4, 0.02, 0.2, 1); }
+.skill-card.is-flipped .skill-card-inner { transform: rotateY(180deg); }
+.skill-card-face { position: absolute; inset: 0; -webkit-backface-visibility: hidden; backface-visibility: hidden;
+  background: var(--elevated); border: 1px solid var(--hairline); border-radius: var(--radius-card);
+  padding: 14px; display: flex; flex-direction: column; overflow: hidden; }
+.skill-card-front { transform: rotateY(0deg); }   /* explicit 3D layer so backface-visibility hides the Add button mid-flip */
+.skill-card-back { transform: rotateY(180deg); }
+.skill-cat { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--accent); }
+.skill-title { font-family: var(--font-brand); font-size: 15px; font-weight: 600; color: var(--ink); margin: 5px 0 4px; }
+.skill-desc { font-size: 12px; line-height: 1.5; color: var(--ink-2); flex: 1 1 auto; overflow: hidden;
+  display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; margin-top: 2px; }
+.skill-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+.skill-on-count { font-size: 11.5px; color: var(--ink-3); }
+.skill-add { flex: none; }
+.skill-back { display: flex; flex-direction: column; height: 100%; }
+.skill-back-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.skill-back-title { font-size: 12px; font-weight: 600; color: var(--ink); }
+.skill-agent-list { flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; margin: 0 -4px; padding: 2px 4px; }
+.skill-agent-row { display: flex; align-items: center; gap: 8px; padding: 6px; border-radius: 7px; cursor: pointer; }
+.skill-agent-row:not(.is-installed):hover { background: var(--grouped); }
+.skill-agent-check { width: 16px; height: 16px; flex: none; border: 1.5px solid var(--hairline-strong); border-radius: 5px;
+  display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; }
+.skill-agent-row.is-checked .skill-agent-check { background: var(--accent); border-color: transparent; }
+.skill-agent-row.is-installed { cursor: default; opacity: 0.7; }
+.skill-agent-row.is-installed .skill-agent-check { background: var(--ink-3); border-color: transparent; }
+.skill-agent-name { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-agent-badge { flex: none; font-size: 10px; color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.03em; }
+.skill-agent-none { font-size: 12px; color: var(--ink-2); padding: 8px 4px; margin: 0; }
+.skill-back-foot { display: flex; gap: 8px; margin-top: 8px; }
+.skill-back-foot .btn { flex: 1 1 auto; }
+
 /* crash error box (only when there is one) */
 .detail-error {
   background: var(--danger-soft); color: var(--danger); border-radius: 10px; padding: 10px 12px;

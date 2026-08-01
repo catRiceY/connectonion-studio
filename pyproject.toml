@@ -18,6 +18,7 @@ dependencies = [
     "ifaddr>=0.2",          # agent IP announce patch (was only transitive)
     "psutil>=5.9",          # cross-platform process teardown / liveness (Windows-safe)
     "filelock>=3.12",       # cross-platform registry lock (replaces POSIX-only fcntl)
+    "pyyaml>=6",            # parse SKILL.md frontmatter for the skills store (also a connectonion dep)
     "connectonion>=1.2.1",  # PyPI 1.2.1 (2026-07-17) ships host()/co_dir/get_ips — verified
 ]
 
@@ -47,4 +48,5 @@ co_studio = [
     "frontend/css/*.css",
     "frontend/js/*.js",
     "frontend/assets/onion/*.png",
+    "skills/*/SKILL.md",
 ]
