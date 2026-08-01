@@ -14,8 +14,8 @@ cd "$(dirname "$0")/.."                 # -> macos/
 ROOT="$(pwd)"
 DIST="$ROOT/dist"
 
-STUDIO_VERSION="${STUDIO_VERSION:-0.1.7}"          # connectonion-studio version to bundle (from PyPI)
-APP_VERSION="0.1.7"                                # keep in sync with Xcode MARKETING_VERSION
+STUDIO_VERSION="${STUDIO_VERSION:-0.1.8}"          # connectonion-studio version to bundle (from PyPI)
+APP_VERSION="0.1.8"                                # keep in sync with Xcode MARKETING_VERSION
 PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260718/cpython-3.12.13%2B20260718-aarch64-apple-darwin-install_only.tar.gz"
 SIGN_ID="Developer ID Application: Yifan Yang (7V6USF6B96)"
 ENT="$ROOT/scripts/python.entitlements"
