@@ -49,6 +49,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     refreshed = creator.refresh_generated_workspace_scripts()
     if refreshed:
         print(f"[co-studio] workspace sandbox updated for {refreshed} agent(s)", flush=True)
+    remediated = creator.remediate_invite_policies()
+    if remediated:
+        print(f"[co-studio] invite-code policy fixed for {remediated} agent(s) — restart them to apply", flush=True)
     # Best-effort, on a daemon thread so the server binds immediately AND a slow first-run auth
     # call can never delay shutdown. The key lands within a few seconds; the onboarding screen
     # (2s poll) dismisses itself once /api/setup/status flips to key_ok.
