@@ -1,0 +1,20 @@
+# Separate optional retrieval database; never replaces the History volume.
+services:
+  knowledge-db:
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    ports:
+      - "127.0.0.1:55433:5432"
+    environment:
+      POSTGRES_USER: studio_knowledge
+      POSTGRES_DB: studio_knowledge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local database password}
+    volumes:
+      - knowledge-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio_knowledge -d studio_knowledge"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+volumes:
+  knowledge-data:

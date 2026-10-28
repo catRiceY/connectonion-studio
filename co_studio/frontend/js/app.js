@@ -9,8 +9,18 @@ import * as api from './api.js';
 import { statusSocket, logSocket } from './ws.js';
 import { createOnion, playSplash } from './onion.js';
 import { copyForClaude, copyText, copyWithFeedback } from './diagnostics.js';
+import { createHistoryView } from './history.js';
+import { createPromptEditor } from './prompt-editor.js';
+import { createToolConfig } from './tool-config.js';
+import { createApprovalsView } from './approvals.js';
+import { createKnowledgeView } from './knowledge.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
+let historyView;
+let promptEditor;
+let toolConfig;
+let approvalsView;
+let knowledgeView;
 
 // ---- state ----------------------------------------------------------
 const state = {
@@ -521,7 +531,7 @@ function renderSideHealth(setup) {
 }
 
 // ---- settings sheet (rises from the bottom of the current card) ----
-function setNav(view) {   // 'agents' | 'logs' | 'settings' — mark exactly one sidebar item active
+function setNav(view) {   // mark exactly one sidebar item active
   document.querySelectorAll('.sidebar-nav .nav-item').forEach((el) => {
     const on = el.dataset.view === view;
     el.classList.toggle('is-active', on);
@@ -530,6 +540,8 @@ function setNav(view) {   // 'agents' | 'logs' | 'settings' — mark exactly one
 }
 function setSettingsNav(on) { setNav(on ? 'settings' : 'agents'); }
 function openSettingsModal({ inset = false } = {}) {
+  closeWorkspaceViews();
+  if ($('#app').classList.contains('is-history')) closeHistoryView();
   renderSettings(state.setup);
   const app = $('#app');
   app.classList.toggle('is-settings-inset', inset);   // main-interface: content-pane only
@@ -563,6 +575,21 @@ function initNav() {
   $('#settings-view').hidden = false;           // CSS visibility/transform drives it now
   app.appendChild($('#logs-view'));             // same for the logs view (fills the content pane)
   $('#logs-view').hidden = false;
+  app.appendChild($('#history-view'));          // saved history uses the same shell and Agent list
+  $('#history-view').hidden = false;
+  historyView = createHistoryView({ root: $('#history-view'), api, onKnowledge: (draft) => {
+    openWorkspaceView('knowledge'); knowledgeView.prefill(draft);
+  } });
+  for (const name of ['knowledge', 'approvals']) {
+    app.appendChild($(`#${name}-view`)); $(`#${name}-view`).hidden = false;
+    const toggle = () => app.classList.contains(`is-${name}`) ? closeWorkspaceViews() : openWorkspaceView(name);
+    $(`#open-${name}`).addEventListener('click', toggle);
+    $(`#open-${name}`).addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+  approvalsView = createApprovalsView({ root: $('#approvals-view'), api });
+  knowledgeView = createKnowledgeView({ root: $('#knowledge-view'), api });
   app.appendChild($('#market-view'));           // and the Skills Market view (fills the content pane)
   $('#market-view').hidden = false;
 
@@ -588,6 +615,15 @@ function initNav() {
   $('#open-logs').addEventListener('click', toggleLogs);
   $('#open-logs').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleLogs(); }
+  });
+
+  const toggleHistory = () => {
+    if (app.classList.contains('is-history')) closeHistoryView();
+    else openHistoryView();
+  };
+  $('#open-history').addEventListener('click', toggleHistory);
+  $('#open-history').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleHistory(); }
   });
 
   // sidebar → Skills: toggle the content-pane market
@@ -625,14 +661,56 @@ function initNav() {
   // sidebar → Agents: step back out of whichever content-pane view is open
   const agentsNav = $('.nav-item[data-view="agents"]');
   if (agentsNav) agentsNav.addEventListener('click', () => {
+    closeWorkspaceViews();
     if (app.classList.contains('is-settings')) closeSettingsModal();
     if (app.classList.contains('is-logs')) closeLogsView();
     if (app.classList.contains('is-market')) closeMarketView();
+    if (app.classList.contains('is-history')) closeHistoryView();
   });
 
   // first-run gear → full-card settings (keeps its own top-right close gear)
   $('#firstrun-settings').addEventListener('click', () => openSettingsModal({ inset: false }));
   $('#settings-close').addEventListener('click', closeSettingsModal);
+}
+
+function closeWorkspaceViews() {
+  const app = $('#app');
+  if (!app.classList.contains('is-knowledge') && !app.classList.contains('is-approvals')) return;
+  app.classList.remove('is-knowledge', 'is-approvals');
+  approvalsView?.close(); knowledgeView?.close(); setNav('agents');
+}
+
+function openWorkspaceView(name) {
+  closeWorkspaceViews();
+  const app = $('#app');
+  if (app.classList.contains('is-detail')) closeDrawer();
+  if (app.classList.contains('is-history')) closeHistoryView();
+  if (app.classList.contains('is-logs')) closeLogsView();
+  if (app.classList.contains('is-market')) closeMarketView();
+  if (app.classList.contains('is-settings')) closeSettingsModal();
+  app.classList.add(`is-${name}`); setNav(name);
+  if (name === 'approvals') approvalsView.open(state.agents);
+  else void knowledgeView.open();
+}
+
+// History shares navigation/Agent discovery with the existing views. It never
+// opens a runtime socket or starts an Agent just to inspect its saved records.
+function openHistoryView() {
+  closeWorkspaceViews();
+  const app = $('#app');
+  if (app.classList.contains('is-detail')) closeDrawer();
+  if (app.classList.contains('is-logs')) closeLogsView();
+  if (app.classList.contains('is-market')) closeMarketView();
+  if (app.classList.contains('is-settings')) closeSettingsModal();
+  app.classList.add('is-history');
+  setNav('history');
+  historyView.open(state.agents);
+}
+
+function closeHistoryView() {
+  $('#app').classList.remove('is-history');
+  historyView?.close();
+  setNav('agents');
 }
 
 // ---- logs view (master–detail: running-agent list + one live detail) ----
@@ -791,7 +869,9 @@ async function revealLogsFolder() {
 }
 
 function openLogsView() {
+  closeWorkspaceViews();
   const app = $('#app');
+  if (app.classList.contains('is-history')) closeHistoryView();
   const fromSettings = app.classList.contains('is-settings');
   if (app.classList.contains('is-detail')) closeDrawer();
   if (app.classList.contains('is-market')) closeMarketView();
@@ -895,6 +975,8 @@ function setAgents(list) {
   renderAgents();
   updateFleetHeader();
   if ($('#app').classList.contains('is-logs')) renderLogs();   // add/remove cards as agents start/stop/crash
+  historyView?.setAgents(list); // includes stopped Agents; do not reuse Logs' running-only filter
+  approvalsView?.setAgents(list);
 
   // keep an open drawer in sync; refetch detail when the state flips
   if (state.drawerSlug) {
@@ -1165,6 +1247,14 @@ function inviteCodeError(code) {
 
 let wizardStacked = false;
 function openCreateModal(stacked = false) {
+  if ($('#app').classList.contains('is-knowledge') || $('#app').classList.contains('is-approvals')) {
+    closeWorkspaceViews(); setTimeout(() => openCreateModal(stacked), 300); return;
+  }
+  if ($('#app').classList.contains('is-history')) {
+    closeHistoryView();
+    setTimeout(() => openCreateModal(stacked), 300);
+    return;
+  }
   // From Settings → first crossfade back to the agents view, THEN open the wizard,
   // so it's a smooth Settings → Agents → New Agent sequence (never an overlap).
   if ($('#app').classList.contains('is-settings')) {
@@ -1490,7 +1580,9 @@ function skillsGroup(detail) {
 
 // ---- Skills Market (sidebar view) -------------------------------------------------------
 function openMarketView() {
+  closeWorkspaceViews();
   const app = $('#app');
+  if (app.classList.contains('is-history')) closeHistoryView();
   if (app.classList.contains('is-detail')) closeDrawer();
   if (app.classList.contains('is-logs')) closeLogsView();
   if (app.classList.contains('is-settings')) closeSettingsModal();
@@ -1762,6 +1854,8 @@ async function refreshDrawerDetail() {
 }
 
 async function openDrawer(slug, prefetched = null) {
+  promptEditor?.close();
+  toolConfig?.close();
   state.drawerSlug = slug;
   state.drawerDetail = null;
   state.drawerSkills = null;
@@ -1776,10 +1870,14 @@ async function openDrawer(slug, prefetched = null) {
   if (!detail || state.drawerSlug !== slug) return;
   state.drawerDetail = detail;
   renderDrawerFields(detail);
+  void promptEditor.open(slug);
+  void toolConfig.open(slug);
   if (detail.preset === 'co-ai') loadDrawerSkills(slug);
 }
 
 function closeDrawer() {
+  promptEditor?.close();
+  toolConfig?.close();
   state.drawerSlug = null;
   state.drawerDetail = null;
   state.drawerSkills = null;
@@ -1797,6 +1895,8 @@ function resetDeleteButton() {
 }
 
 function initDrawer() {
+  promptEditor = createPromptEditor({ root: $('#prompt-editor'), api });
+  toolConfig = createToolConfig({ root: $('#tool-config'), api });
   $('#app').appendChild($('#detail-view'));   // relocate the detail overlay inside the card
   $('#detail-view').hidden = false;           // CSS visibility/opacity drives it now
   $('#d-close').addEventListener('click', closeDrawer);
@@ -2257,6 +2357,8 @@ async function boot() {
     if (e.key !== 'Escape') return;
     closeAllCardMenus();
     if ($('#app').classList.contains('is-settings')) closeSettingsModal();
+    else if ($('#app').classList.contains('is-knowledge') || $('#app').classList.contains('is-approvals')) closeWorkspaceViews();
+    else if ($('#app').classList.contains('is-history')) closeHistoryView();
     else if ($('#app').classList.contains('is-logs')) closeLogsView();
     else if ($('#app').classList.contains('is-market')) closeMarketView();
     else if (!$('#modal-qr').hidden) $('#modal-qr').hidden = true;

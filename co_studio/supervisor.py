@@ -115,87 +115,107 @@ class Supervisor:
     async def start(self, meta: AgentMeta) -> str:
         """Spawn the agent via the runner shim; reallocates the port if it went busy."""
         async with self._lock_for(meta.slug):  # two concurrent starts must not double-spawn
-            record = self._records.get(meta.slug)
-            if record and record.state in ("starting", "online", "offline") and self._alive(record):
-                return record.state
-            verdict = await asyncio.to_thread(self._probe, meta.port, meta.address)
-            if verdict == "online":  # already serving (adopted or started outside the studio)
+            return await self._start_locked(meta)
+
+    async def _start_locked(self, meta: AgentMeta, *, preserve_port: bool = False) -> str:
+        """Start under the caller's slug lock; Restart must retain its endpoint."""
+        record = self._records.get(meta.slug)
+        if record and record.state in ("starting", "online", "offline") and self._alive(record):
+            return record.state
+        verdict = await asyncio.to_thread(self._probe, meta.port, meta.address)
+        if verdict == "online" and not preserve_port:  # existing ordinary-start adoption
+            self._records[meta.slug] = ProcRecord(
+                pid=self._read_pid(meta.slug), state="online", started_at=time.time(),
+                log_path=logs.latest_run_log(registry.agent_dir(meta.slug)),
+            )
+            self._notify()
+            return "online"
+        if (preserve_port and verdict != "down") or not ports.is_free(meta.port):
+            if preserve_port:
+                # Never adopt a surviving process as a successful restart, or
+                # move a phone's saved endpoint because another service owns it.
                 self._records[meta.slug] = ProcRecord(
-                    pid=self._read_pid(meta.slug), state="online", started_at=time.time(),
-                    log_path=logs.latest_run_log(registry.agent_dir(meta.slug)),
-                )
-                self._notify()
-                return "online"
-            if not ports.is_free(meta.port):  # someone else grabbed it — re-probe and reallocate
-                with registry.locked():
-                    reserved = {m.port for m in registry.load_all() if m.slug != meta.slug}
-                    meta.port = ports.allocate(reserved)
-                    registry.save(meta)
-            agent_dir = registry.agent_dir(meta.slug)
-            try:
-                work_dir = workspaces.ensure(
-                    meta,
-                    require_write=meta.preset == "co-ai" or any(
-                        capability in {"file-write", "shell", "browser"}
-                        for capability in meta.capabilities
+                    state="crashed", last_error=(
+                        f"Cannot restart: port {meta.port} is in use. The endpoint was kept unchanged; "
+                        "free the port and try Restart again."
                     ),
-                )
-            except ValueError as exc:
-                self._records[meta.slug] = ProcRecord(
-                    state="crashed", last_error=str(exc)
                 )
                 self._notify()
                 return "crashed"
-            # One fresh log file per start (runs/<timestamp>.log) so the live view shows ONLY this
-            # run and every start→stop is kept for the Finder history. Second-granularity is fine:
-            # a stop→start within the same second is the only collision and just shares one file.
-            runs_dir = agent_dir / config.RUNS_DIR_NAME
-            runs_dir.mkdir(exist_ok=True)
-            log_path = runs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}.log"
-            # Reuse (not a new name) so this override MASKS any CO_STUDIO_PORT the user exported for the
-            # studio's own port — each agent always gets its own port here, never the studio's.
-            env = {
-                **os.environ,
-                "CO_STUDIO_PORT": str(meta.port),
-                "CO_STUDIO_WORK_DIR": str(work_dir),
-            }
-            with open(log_path, "ab") as stdout:
-                popen = subprocess.Popen(  # noqa: S603 — our own generated script
-                    # config.agent_python() == sys.executable everywhere except a frozen build; under
-                    # the bundled relocatable interpreter it IS the embedded python, so agents spawn
-                    # against a real interpreter that can import connectonion — no re-exec needed.
-                    [config.agent_python(), str(config.RUNNER_PATH), str(agent_dir / "agent.py")],
-                    cwd=work_dir,  # project context and relative tool paths are workspace-relative
-                    env=env,
-                    stdout=stdout,
-                    stderr=subprocess.STDOUT,
-                    **_SPAWN_KWARGS,  # own process group for group teardown (POSIX + Windows)
-                )
-            (agent_dir / config.PIDFILE_NAME).write_text(str(popen.pid))
+            with registry.locked():
+                reserved = {m.port for m in registry.load_all() if m.slug != meta.slug}
+                meta.port = ports.allocate(reserved)
+                registry.save(meta)
+        agent_dir = registry.agent_dir(meta.slug)
+        try:
+            work_dir = workspaces.ensure(
+                meta,
+                require_write=meta.preset == "co-ai" or any(
+                    capability in {"file-write", "shell", "browser"}
+                    for capability in meta.capabilities
+                ),
+            )
+        except ValueError as exc:
             self._records[meta.slug] = ProcRecord(
-                pid=popen.pid, popen=popen, state="starting", started_at=time.time(), log_path=log_path
+                state="crashed", last_error=str(exc)
             )
             self._notify()
-            return "starting"
+            return "crashed"
+        # One fresh log file per start (runs/<timestamp>.log) so the live view shows ONLY this
+        # run and every start→stop is kept for the Finder history. Second-granularity is fine:
+        # a stop→start within the same second is the only collision and just shares one file.
+        runs_dir = agent_dir / config.RUNS_DIR_NAME
+        runs_dir.mkdir(exist_ok=True)
+        log_path = runs_dir / f"{time.strftime('%Y%m%d-%H%M%S')}.log"
+        # Reuse (not a new name) so this override MASKS any CO_STUDIO_PORT the user exported for the
+        # studio's own port — each agent always gets its own port here, never the studio's.
+        env = {
+            **os.environ,
+            "CO_STUDIO_PORT": str(meta.port),
+            "CO_STUDIO_WORK_DIR": str(work_dir),
+        }
+        with open(log_path, "ab") as stdout:
+            popen = subprocess.Popen(  # noqa: S603 — our own generated script
+                # config.agent_python() == sys.executable everywhere except a frozen build; under
+                # the bundled relocatable interpreter it IS the embedded python, so agents spawn
+                # against a real interpreter that can import connectonion — no re-exec needed.
+                [config.agent_python(), str(config.RUNNER_PATH), str(agent_dir / "agent.py")],
+                cwd=work_dir,  # project context and relative tool paths are workspace-relative
+                env=env,
+                stdout=stdout,
+                stderr=subprocess.STDOUT,
+                **_SPAWN_KWARGS,  # own process group for group teardown (POSIX + Windows)
+            )
+        (agent_dir / config.PIDFILE_NAME).write_text(str(popen.pid))
+        self._records[meta.slug] = ProcRecord(
+            pid=popen.pid, popen=popen, state="starting", started_at=time.time(), log_path=log_path
+        )
+        self._notify()
+        return "starting"
 
     async def stop(self, slug: str) -> str:
         """SIGTERM the process group, 5s grace, then SIGKILL."""
         async with self._lock_for(slug):
-            record = self._records.get(slug)
-            if record is None or not self._alive(record):
-                self._records[slug] = ProcRecord(state="stopped")
-            else:
-                record.stop_requested = True
-                await asyncio.to_thread(self._terminate, record)
-                record.state, record.popen, record.pid = "stopped", None, None
-            self._remove_pidfile(slug)
-            self._notify()
-            return "stopped"
+            return await self._stop_locked(slug)
+
+    async def _stop_locked(self, slug: str) -> str:
+        """Stop under the caller's slug lock, also used by atomic Restart."""
+        record = self._records.get(slug)
+        if record is None or not self._alive(record):
+            self._records[slug] = ProcRecord(state="stopped")
+        else:
+            record.stop_requested = True
+            await asyncio.to_thread(self._terminate, record)
+            record.state, record.popen, record.pid = "stopped", None, None
+        self._remove_pidfile(slug)
+        self._notify()
+        return "stopped"
 
     async def restart(self, meta: AgentMeta) -> str:
-        """Stop (if running) then start again."""
-        await self.stop(meta.slug)
-        return await self.start(meta)
+        """Stop and start atomically without changing the Agent's endpoint."""
+        async with self._lock_for(meta.slug):
+            await self._stop_locked(meta.slug)
+            return await self._start_locked(meta, preserve_port=True)
 
     def adopt_orphans(self) -> None:
         """Reattach to agent processes left running by a previous studio instance."""

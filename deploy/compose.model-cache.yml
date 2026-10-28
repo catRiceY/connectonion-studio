@@ -1,0 +1,11 @@
+# Optional: mount only an already-downloaded public embedding model, never HOME.
+# Relative bind paths are resolved against the first Compose file's directory.
+services:
+  app:
+    volumes:
+      - type: bind
+        source: ${STUDIO_EMBEDDING_CACHE:?Set the explicit public embedding cache directory}
+        target: /home/studio/.co-studio/embedding-cache
+        read_only: true
+        bind:
+          create_host_path: false

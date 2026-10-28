@@ -20,6 +20,7 @@ import webbrowser
 from pathlib import Path
 
 import uvicorn
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import config
 from .app import create_app
@@ -120,8 +121,12 @@ def main(argv: list[str] | None = None) -> None:
     # access_log=False silences uvicorn's per-request spam (every /css, /js, /assets 304 and
     # WebSocket accept); the startup / doctor / shutdown lines stay. timeout_graceful_shutdown
     # stops it waiting forever for a lingering browser WebSocket so Ctrl+C / close exits promptly.
+    application = create_app()
+    # Prevent DNS-rebinding Host names from reaching local control endpoints.
+    # Container deployments apply the same fixed host policy in their proxy.
+    application.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "[::1]"], www_redirect=False)
     server = uvicorn.Server(uvicorn.Config(
-        create_app(), host=host, port=port,
+        application, host=host, port=port,
         log_level="info", access_log=False, timeout_graceful_shutdown=5,
     ))
     # Closing the terminal (SIGHUP) should stop the studio cleanly, not leave an orphan that

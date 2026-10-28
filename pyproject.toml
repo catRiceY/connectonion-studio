@@ -19,7 +19,9 @@ dependencies = [
     "psutil>=5.9",          # cross-platform process teardown / liveness (Windows-safe)
     "filelock>=3.12",       # cross-platform registry lock (replaces POSIX-only fcntl)
     "pyyaml>=6",            # parse SKILL.md frontmatter for the skills store (also a connectonion dep)
-    "connectonion>=1.2.1",  # PyPI 1.2.1 (2026-07-17) ships host()/co_dir/get_ips — verified
+    "connectonion==1.9.2", # Studio adapters are tested against this stable release
+    "websockets>=15.0.1,<18", # asyncio transport with system HTTP/SOCKS proxy support
+    "python-socks[asyncio]>=2.4,<3", # websockets relay honors the user's system SOCKS proxy
 ]
 
 classifiers = [
@@ -30,13 +32,25 @@ classifiers = [
     "Programming Language :: Python :: 3",
 ]
 
+[dependency-groups]
+dev = ["pytest>=9,<10"]
+
+[project.optional-dependencies]
+history = ["psycopg[binary]>=3.2,<4"]
+mcp = ["mcp>=1.20,<2", "jsonschema>=4.20,<5"]
+knowledge = ["psycopg[binary]>=3.2,<4", "fastembed>=0.7,<1"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [project.urls]
-Homepage = "https://github.com/EvanYifanYang/connectonion-studio"
-Repository = "https://github.com/EvanYifanYang/connectonion-studio"
-Issues = "https://github.com/EvanYifanYang/connectonion-studio/issues"
+Homepage = "https://github.com/catRiceY/connectonion-studio"
+Repository = "https://github.com/catRiceY/connectonion-studio"
+Issues = "https://github.com/catRiceY/connectonion-studio/issues"
 
 [project.scripts]
 co-studio = "co_studio.__main__:main"
+co-studio-history = "co_studio.history_archive:main"
 
 [tool.setuptools.packages.find]
 include = ["co_studio*"]
@@ -49,4 +63,5 @@ co_studio = [
     "frontend/js/*.js",
     "frontend/assets/onion/*.png",
     "skills/*/SKILL.md",
+    "knowledge_docs/*.md",
 ]

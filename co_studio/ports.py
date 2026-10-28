@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import os
 import socket
 
 from . import config
 
 
 def is_free(port: int) -> bool:
-    """True when nothing is bound on the port (bind probe on all interfaces)."""
+    """Whether the server can bind without taking an active listener's port."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        # Match Host/uvicorn on POSIX: a stopped server's TIME_WAIT connections
+        # do not prevent reuse. REUSEADDR alone cannot take an active listener.
+        # On Windows it can permit competing binds, so keep the non-reusing probe.
+        if os.name == "posix":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind(("", port))
         except OSError:

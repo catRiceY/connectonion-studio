@@ -1,0 +1,50 @@
+name: Native macOS compile smoke
+
+"on":
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-compile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-compile:
+    name: Unsigned macOS shell / Debug
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      GIT_TERMINAL_PROMPT: "0"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2, same pinned revision as regression
+        with:
+          persist-credentials: false
+
+      - name: Verify pinned Swift package lock
+        run: |
+          test -f macos/ConnectOnionStudio/ConnectOnionStudio.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          xcodebuild -version
+
+      - name: Compile native shell only (no signing or Python bundle)
+        run: |
+          xcodebuild \
+            -project macos/ConnectOnionStudio/ConnectOnionStudio.xcodeproj \
+            -scheme ConnectOnionStudio \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/studio-native-derived-data" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/studio-native-source-packages" \
+            -disableAutomaticPackageResolution \
+            -onlyUsePackageVersionsFromResolvedFile \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Verify package lock was not changed
+        if: always()
+        run: git diff --exit-code -- macos/ConnectOnionStudio/ConnectOnionStudio.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

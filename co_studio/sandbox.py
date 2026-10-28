@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
+from connectonion.core.tool_result import ToolFailure
+
 
 _DENIED = "Error: Workspace access denied"
 
@@ -73,7 +75,7 @@ class SandboxedFileTools:
 
     @staticmethod
     def _error(exc: ValueError) -> str:
-        return f"{_DENIED} - {exc}"
+        return ToolFailure(f"{_DENIED} - {exc}")
 
     def read_file(self, path: str, offset: Optional[int] = None, limit: Optional[int] = None) -> str:
         """Read a file inside this Agent's workspace."""
@@ -86,7 +88,7 @@ class SandboxedFileTools:
     def glob(self, pattern: str, path: Optional[str] = None) -> str:
         """Find files inside the workspace without accepting traversal patterns."""
         if not _safe_pattern(pattern):
-            return f"{_DENIED} - glob pattern must stay inside workspace: {pattern}"
+            return ToolFailure(f"{_DENIED} - glob pattern must stay inside workspace: {pattern}")
         try:
             base = self._path(path or ".", must_exist=True)
         except ValueError as exc:
@@ -105,7 +107,7 @@ class SandboxedFileTools:
     ) -> str:
         """Search file contents inside the workspace."""
         if file_pattern and not _safe_pattern(file_pattern):
-            return f"{_DENIED} - file pattern must stay inside workspace: {file_pattern}"
+            return ToolFailure(f"{_DENIED} - file pattern must stay inside workspace: {file_pattern}")
         try:
             base = self._path(path or ".", must_exist=True)
         except ValueError as exc:
@@ -211,7 +213,8 @@ class SandboxedShell:
         if result.returncode != 0:
             parts.append(f"\nExit code: {result.returncode}")
         output = "\n".join(parts) if parts else "(no output)"
-        return output[:10000] + (f"\n... (truncated, {len(output):,} total chars)" if len(output) > 10000 else "")
+        formatted = output[:10000] + (f"\n... (truncated, {len(output):,} total chars)" if len(output) > 10000 else "")
+        return ToolFailure(formatted) if result.returncode != 0 else formatted
 
     def bash(self, command: str, description: str, cwd: str = ".", timeout: int = 120) -> str:
         """Run a shell command inside this Agent's workspace."""
@@ -219,11 +222,11 @@ class SandboxedShell:
             safe_cwd = self._cwd(cwd)
             result = self._launch(command, safe_cwd, timeout)
         except ValueError as exc:
-            return f"{_DENIED} - {exc}"
+            return ToolFailure(f"{_DENIED} - {exc}")
         except subprocess.TimeoutExpired:
-            return f"Error: Command timed out after {min(max(timeout, 1), 600)} seconds"
+            return ToolFailure(f"Error: Command timed out after {min(max(timeout, 1), 600)} seconds")
         except (OSError, RuntimeError) as exc:
-            return f"Error: {exc}"
+            return ToolFailure(f"Error: {exc}")
         return self._format(result)
 
 
@@ -258,7 +261,7 @@ class SandboxedBackgroundTasks:
     def run_background(self, command: str, description: str = "") -> str:
         """Run a long command in the workspace and return a task id."""
         if sys.platform != "darwin" or not shutil.which("sandbox-exec"):
-            return "Error: Shell workspace sandbox is currently available only on macOS"
+            return ToolFailure("Error: Shell workspace sandbox is currently available only on macOS")
         with self._lock:
             self._counter += 1
             task_id = f"bg_{self._counter}"
@@ -279,7 +282,7 @@ class SandboxedBackgroundTasks:
                 env=env,
             )
         except OSError as exc:
-            return f"Error: Could not start background command: {exc}"
+            return ToolFailure(f"Error: Could not start background command: {exc}")
         task = _BackgroundTask(task_id, command, process)
         with self._lock:
             self._tasks[task_id] = task
@@ -292,7 +295,7 @@ class SandboxedBackgroundTasks:
         with self._lock:
             task = self._tasks.get(task_id)
         if task is None:
-            return f"Task '{task_id}' not found."
+            return ToolFailure(f"Task '{task_id}' not found.")
         ended = task.ended_at or time.time()
         state = "running" if task.process.poll() is None else ("completed" if task.process.returncode == 0 else "failed")
         lines = task.output[-max(1, min(tail, 500)):]
@@ -304,9 +307,9 @@ class SandboxedBackgroundTasks:
         with self._lock:
             task = self._tasks.get(task_id)
         if task is None:
-            return f"Task '{task_id}' not found."
+            return ToolFailure(f"Task '{task_id}' not found.")
         if task.process.poll() is not None:
-            return f"Task '{task_id}' is not running."
+            return ToolFailure(f"Task '{task_id}' is not running.")
         task.process.send_signal(signal.SIGTERM)
         return f"Task '{task_id}' terminated."
 
@@ -343,18 +346,18 @@ class SandboxedBrowserPaths:
 
     @staticmethod
     def _error(exc: ValueError) -> str:
-        return f"{_DENIED} - {exc}"
+        return ToolFailure(f"{_DENIED} - {exc}")
 
     def go_to(self, url: str, purpose: str = "", who: str = "", hours: float = 0.0) -> str:
         """Navigate to a web URL; local file URLs are unavailable."""
         if not url_is_workspace_safe(url):
-            return f"{_DENIED} - browser file URLs are unavailable"
+            return ToolFailure(f"{_DENIED} - browser file URLs are unavailable")
         return self.browser.go_to(url, purpose, who, hours)
 
     def newtab(self, url: str = "", purpose: str = "", who: str = "", hours: float = 0.0) -> str:
         """Open a web URL in a new tab; local file URLs are unavailable."""
         if url and not url_is_workspace_safe(url):
-            return f"{_DENIED} - browser file URLs are unavailable"
+            return ToolFailure(f"{_DENIED} - browser file URLs are unavailable")
         return self.browser.newtab(url, purpose, who, hours)
 
     def run_page_script(self, script_path: str, args_json: str = "{}") -> str:
@@ -468,13 +471,13 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
         def go_to(self, url: str, purpose: str = "", who: str = "", hours: float = 0.0) -> str:
             """Navigate to a web URL; local file URLs are unavailable."""
             if not url_is_workspace_safe(url):
-                return f"{_DENIED} - browser file URLs are unavailable"
+                return ToolFailure(f"{_DENIED} - browser file URLs are unavailable")
             return super().go_to(url, purpose, who, hours)
 
         def newtab(self, url: str = "", purpose: str = "", who: str = "", hours: float = 0.0) -> str:
             """Open a web URL in a new tab; local file URLs are unavailable."""
             if url and not url_is_workspace_safe(url):
-                return f"{_DENIED} - browser file URLs are unavailable"
+                return ToolFailure(f"{_DENIED} - browser file URLs are unavailable")
             return super().newtab(url, purpose, who, hours)
 
         def run_page_script(self, script_path: str, args_json: str = "{}") -> str:
@@ -482,7 +485,7 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
             try:
                 safe = self._safe_path(script_path, must_exist=True)
             except ValueError as exc:
-                return f"{_DENIED} - {exc}"
+                return ToolFailure(f"{_DENIED} - {exc}")
             return super().run_page_script(safe, args_json)
 
         def run_frame_script(
@@ -497,7 +500,7 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
             try:
                 safe = self._safe_path(script_path, must_exist=True)
             except ValueError as exc:
-                return f"{_DENIED} - {exc}"
+                return ToolFailure(f"{_DENIED} - {exc}")
             return super().run_frame_script(safe, args_json, frame_url_contains, frame_name, first_ok)
 
         def save_state(self, path: str) -> str:
@@ -505,7 +508,7 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
             try:
                 safe = self._safe_path(path, must_exist=False)
             except ValueError as exc:
-                return f"{_DENIED} - {exc}"
+                return ToolFailure(f"{_DENIED} - {exc}")
             return super().save_state(safe)
 
         def take_screenshot(self, path: str | None = None, full_page: bool = False) -> str:
@@ -513,7 +516,7 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
             try:
                 safe = self._safe_path(path or ".tmp/screenshot.png", must_exist=False)
             except ValueError as exc:
-                return f"{_DENIED} - {exc}"
+                return ToolFailure(f"{_DENIED} - {exc}")
             return super().take_screenshot(safe, full_page)
 
         def upload_file_by_selector(
@@ -528,7 +531,7 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
             try:
                 safe = self._safe_path(file_path, must_exist=True)
             except ValueError as exc:
-                return f"{_DENIED} - {exc}"
+                return ToolFailure(f"{_DENIED} - {exc}")
             return super().upload_file_by_selector(selector, safe, index, frame_url_contains, frame_name)
 
         def upload_file_after_click_by_selector(
@@ -545,7 +548,7 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
             try:
                 safe = self._safe_path(file_path, must_exist=True)
             except ValueError as exc:
-                return f"{_DENIED} - {exc}"
+                return ToolFailure(f"{_DENIED} - {exc}")
             return super().upload_file_after_click_by_selector(
                 click_selector, safe, index, text, frame_url_contains, frame_name, timeout_ms
             )
@@ -553,8 +556,20 @@ def create_sandboxed_browser(work_dir: str | Path, *, headless: bool = False) ->
     return BrowserAutomation(headless=headless)
 
 
+# Explicitly reviewed co-ai surface. File/shell/background names are replaced
+# below; the remaining names are the existing todo, skill and interaction tools.
+# In particular, upstream delegation/watch tools do not inherit our wrappers.
+# New upstream tools must be reviewed here instead of silently gaining access.
+_STUDIO_CODING_TOOL_NAMES = frozenset({
+    "read_file", "glob", "grep", "edit", "multi_edit", "write",
+    "bash", "run_background", "task_output", "kill_task",
+    "add", "start", "complete", "remove", "list", "update", "clear",
+    "skill", "load_guide", "ask_user",
+})
+
+
 def sandbox_coding_agent(agent: Any, work_dir: str | Path, runtime_dir: str | Path) -> Any:
-    """Replace co-ai's unscoped file/shell/background tools in-place."""
+    """Apply workspace wrappers and fail closed on unreviewed co-ai tools."""
     files = SandboxedFileTools(work_dir)
     shell = SandboxedShell(work_dir, runtime_dir)
     background = SandboxedBackgroundTasks(shell)
@@ -562,14 +577,17 @@ def sandbox_coding_agent(agent: Any, work_dir: str | Path, runtime_dir: str | Pa
     _add_methods(agent, shell, ("bash",))
     _add_methods(agent, background, ("run_background", "task_output", "kill_task"))
     sandbox_browser_agent_tools(agent, work_dir)
-    # Framework sub-agents currently construct fresh unscoped FileTools/bash instances.
-    # Fail closed until the upstream plugin accepts a tool resolver supplied by Studio.
-    agent.remove_tool("task")
+    # Sub-agents, native Codex/Claude delegation and watches can start independent
+    # execution paths. Disabling only `task` no longer covers the factory's tools.
+    for name in agent.list_tools():
+        if name not in _STUDIO_CODING_TOOL_NAMES:
+            agent.remove_tool(name)
     agent.system_prompt += (
         "\n\n## Workspace boundary\n"
         f"All local file and command work is confined to {_display(Path(work_dir).resolve())}. "
-        "Paths outside it are unavailable. Sub-agent execution is disabled in Studio because "
-        "the current framework sub-agent resolver is not workspace-aware."
+        "Paths outside it are unavailable. Sub-agent execution, Codex/Claude Code delegation "
+        "and watch scheduling are disabled in Studio until their workspace isolation is reviewed. "
+        "Use only the tools in this session; instructions mentioning unavailable tools do not enable them."
     )
     return agent
 

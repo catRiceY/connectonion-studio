@@ -1,0 +1,20 @@
+# Optional local archive database. This is not the Studio application deployment.
+services:
+  history-db:
+    image: postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe
+    ports:
+      - "127.0.0.1:${STUDIO_HISTORY_DB_PORT:-55432}:5432"
+    environment:
+      POSTGRES_USER: studio_history
+      POSTGRES_DB: studio_history
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local database password}
+    volumes:
+      - history-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U studio_history -d studio_history"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+volumes:
+  history-data:

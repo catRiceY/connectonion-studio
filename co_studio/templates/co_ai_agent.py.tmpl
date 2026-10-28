@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from connectonion import host
+from connectonion.environment import load_project_env
 from connectonion.cli.co_ai.agent import create_coding_agent
 from co_studio.sandbox import configure_process_environment, sandbox_coding_agent
 
@@ -26,6 +27,8 @@ configure_process_environment(WORK_DIR, RUNTIME_DIR)
 
 
 if __name__ == "__main__":
+    # Standalone launches also need project settings before the LLM is built.
+    load_project_env(AGENT_DIR / ".env")
     agent = create_coding_agent(model=MODEL, co_dir=CO_DIR)
     sandbox_coding_agent(agent, WORK_DIR, RUNTIME_DIR)
     host(agent, port=PORT, trust=TRUST_POLICY, co_dir=CO_DIR)

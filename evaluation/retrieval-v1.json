@@ -1,0 +1,262 @@
+{
+  "dataset_id": "studio-documentation-retrieval-v1",
+  "scope": "English documentation lookup, one expected document per query; not diagnosis correctness or an independently authored benchmark",
+  "cases": [
+    {
+      "case_id": "retrieval-session",
+      "query": "Where can an event handler inspect current messages, the trace and conversation turn?",
+      "expected_path": "concepts/session.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-tools",
+      "query": "How are Python type hints and function docstrings converted into agent tool schemas?",
+      "expected_path": "concepts/tools.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-structured",
+      "query": "How do I get a validated Pydantic response from a one-shot model call?",
+      "expected_path": "concepts/llm_do.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-events",
+      "query": "How do on_events hooks observe an LLM call during the agent lifecycle?",
+      "expected_path": "concepts/events.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-prompts",
+      "query": "Which file formats can be loaded as an Agent system prompt?",
+      "expected_path": "concepts/prompts.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-iterations",
+      "query": "What does max_iterations limit when the agent repeatedly calls tools?",
+      "expected_path": "concepts/max_iterations.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-plugins",
+      "query": "How do I reuse event handlers as plugins across several agents?",
+      "expected_path": "concepts/plugins.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-trust",
+      "query": "How can code-based trust checks run before the model without using tokens?",
+      "expected_path": "concepts/fast_rules.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-onboarding",
+      "query": "How does a hosted agent define trust onboarding requirements for new clients?",
+      "expected_path": "concepts/onboarding.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-model_setup",
+      "query": "How are managed model keys and bring-your-own provider credentials configured?",
+      "expected_path": "concepts/models.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-compact",
+      "query": "What plugin compresses context when the window reaches ninety percent capacity?",
+      "expected_path": "useful_plugins/auto_compact.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-subagents",
+      "query": "How can a parent delegate to specialized sub-agents with their own model and tools?",
+      "expected_path": "useful_plugins/subagents.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-approval_modes",
+      "query": "What are the read-only and auto permission modes for effectful live I/O tool calls?",
+      "expected_path": "useful_plugins/tool_approval.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-shell",
+      "query": "How can I request a human decision before executing a shell command?",
+      "expected_path": "useful_plugins/shell_approval.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-write_tool",
+      "query": "Which plugin blocks bash file creation to preserve structured file editing and diffs?",
+      "expected_path": "useful_plugins/prefer_write_tool.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-vision",
+      "query": "How are base64 screenshot tool results converted into vision model inputs?",
+      "expected_path": "useful_plugins/image_result_formatter.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-skills",
+      "query": "How do slash-invoked workflows receive scoped permissions?",
+      "expected_path": "useful_plugins/skills.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-reminders",
+      "query": "How can contextual guidance be appended to tool results as reminders?",
+      "expected_path": "useful_plugins/system_reminder.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-watch",
+      "query": "How can events arriving during the final model call trigger another iteration?",
+      "expected_path": "useful_plugins/watch_events.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-stream",
+      "query": "Which plugin streams completion summaries to connected WebSocket UI clients?",
+      "expected_path": "useful_plugins/ui_stream.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-react",
+      "query": "How can an agent add planning and reflection steps between tool executions?",
+      "expected_path": "useful_plugins/re_act.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-host",
+      "query": "How do I make an Agent accessible over a network with host()?",
+      "expected_path": "network/host.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-reconnect",
+      "query": "When a WebSocket drops, which layers preserve running sessions and restored history?",
+      "expected_path": "network/session-reconnect.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-protocol",
+      "query": "Which CONNECT, INPUT and EXEC messages are used in the browser protocol?",
+      "expected_path": "network/websocket-protocol.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-remote_call",
+      "query": "How can a client execute a remote tool directly without an LLM and what permission gates it?",
+      "expected_path": "network/remote-call.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-http_routes",
+      "query": "How are deterministic public HTTP resources published alongside the hosted agent?",
+      "expected_path": "network/http-routes.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-host_config",
+      "query": "Where are hosted agent summaries, examples and trust settings configured in YAML?",
+      "expected_path": "network/host-config.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-io",
+      "query": "How can a hosted agent use agent.io to communicate logs and approval events to a client?",
+      "expected_path": "network/io.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-log",
+      "query": "Where are agent logs and eval session files written and how is logging disabled?",
+      "expected_path": "debug/log.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-xray",
+      "query": "How can a tool inspect the active agent, task and iteration using a decorator?",
+      "expected_path": "debug/xray.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-eval_format",
+      "query": "How are eval input sequences, expected results and multiple runs represented in YAML?",
+      "expected_path": "debug/eval-format.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    },
+    {
+      "case_id": "retrieval-debug",
+      "query": "How can I pause an agent at a breakpoint and inspect runtime state interactively?",
+      "expected_path": "debug/auto_debug.md",
+      "category": "documentation_lookup",
+      "split": "frozen-v1",
+      "authorship": "agent-authored/source-inspected; no human or external holdout review"
+    }
+  ]
+}
