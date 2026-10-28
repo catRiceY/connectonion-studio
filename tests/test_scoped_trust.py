@@ -7,7 +7,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from connectonion.network.trust import tools as framework_trust_tools
 from connectonion.network.trust.trust_agent import TrustAgent
 
 from co_studio import creator
@@ -30,11 +29,11 @@ class ScopedTrustAgentTests(unittest.TestCase):
     def test_global_framework_contact_does_not_authorize_scoped_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            global_dir = root / "global"
+            global_dir = root / ".co"
             global_dir.mkdir()
             (global_dir / "contacts.txt").write_text("0xclient\n")
 
-            with patch.object(framework_trust_tools, "CO_DIR", global_dir):
+            with patch.object(Path, "home", return_value=root):
                 trust = ScopedTrustAgent(INVITE_POLICY, co_dir=root / "agent" / ".co")
                 decision = trust.should_allow("0xclient")
 
@@ -57,14 +56,75 @@ class ScopedTrustAgentTests(unittest.TestCase):
     def test_direct_invite_request_and_blocklist_stay_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            trust = ScopedTrustAgent(INVITE_POLICY, co_dir=root / ".co")
+            trust = ScopedTrustAgent(INVITE_POLICY, co_dir=root / "first" / ".co")
+            second = ScopedTrustAgent(INVITE_POLICY, co_dir=root / "second" / ".co")
 
             admitted = trust.should_allow("0xclient", {"invite_code": "agent-code"})
+            second.verify_invite("0xclient", "agent-code")
             trust.block("0xclient", "test")
 
             self.assertTrue(admitted.allow)
             self.assertFalse(trust.should_allow("0xclient").allow)
             self.assertEqual(trust.get_level("0xclient"), "blocked")
+            self.assertTrue(second.should_allow("0xclient").allow)
+            self.assertFalse(second.is_blocked("0xclient"))
+
+    def test_whitelist_and_admin_changes_stay_scoped(self) -> None:
+        policy = INVITE_POLICY.replace("[whitelisted, contact]", "[admin, whitelisted, contact]")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = ScopedTrustAgent(policy, co_dir=root / "first" / ".co")
+            second = ScopedTrustAgent(policy, co_dir=root / "second" / ".co")
+
+            first.promote_to_whitelist("0xtrusted")
+            first.add_admin("0xadmin")
+
+            self.assertTrue(first.should_allow("0xtrusted").allow)
+            self.assertFalse(second.should_allow("0xtrusted").allow)
+            self.assertTrue(first.is_admin("0xadmin"))
+            self.assertTrue(first.should_allow("0xadmin").allow)
+            self.assertFalse(second.is_admin("0xadmin"))
+            self.assertFalse(second.should_allow("0xadmin").allow)
+
+            first.remove_admin("0xadmin")
+            self.assertFalse(first.is_admin("0xadmin"))
+
+    def test_unset_environment_invite_cannot_be_used_as_a_literal_code(self) -> None:
+        placeholder = "$CO_STUDIO_TEST_INVITE"
+        policy = INVITE_POLICY.replace("agent-code", placeholder)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"CO_STUDIO_TEST_INVITE": ""}
+        ):
+            trust = ScopedTrustAgent(policy, co_dir=Path(tmp) / ".co")
+
+            self.assertFalse(trust.verify_invite("0xclient", placeholder))
+            self.assertFalse(trust.should_allow("0xclient", {"invite_code": placeholder}).allow)
+            self.assertFalse(trust.is_contact("0xclient"))
+
+    def test_environment_invite_uses_resolved_value(self) -> None:
+        policy = INVITE_POLICY.replace("agent-code", "$CO_STUDIO_TEST_INVITE")
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(
+            "os.environ", {"CO_STUDIO_TEST_INVITE": "resolved-code"}
+        ):
+            trust = ScopedTrustAgent(policy, co_dir=Path(tmp) / ".co")
+            self.assertTrue(trust.verify_invite("0xclient", "resolved-code"))
+            self.assertTrue(trust.is_contact("0xclient"))
+
+    def test_self_reported_payment_does_not_authorize_or_promote(self) -> None:
+        policy = INVITE_POLICY.replace("invite_code: [agent-code]", "payment: 10")
+        with tempfile.TemporaryDirectory() as tmp:
+            trust = ScopedTrustAgent(policy, co_dir=Path(tmp) / ".co")
+            with patch.object(trust, "_verify_transfer_via_api") as verify:
+                decision = trust.should_allow("0xclient", {"payment": 1000})
+
+            self.assertFalse(decision.allow)
+            self.assertFalse(trust.is_contact("0xclient"))
+            verify.assert_not_called()
+
+    def test_adapter_inherits_native_policy_and_storage_methods(self) -> None:
+        for name in ("should_allow", "verify_invite", "promote_to_contact", "block", "is_admin"):
+            with self.subTest(method=name):
+                self.assertIs(getattr(ScopedTrustAgent, name), getattr(TrustAgent, name))
 
     def test_open_policy_keeps_allowing_unknown_clients(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -98,10 +158,18 @@ class ScopedHostTests(unittest.TestCase):
         def fake_host(_agent, **kwargs):
             captured.update(kwargs)
 
-        custom = TrustAgent("open")
-        scope_host(fake_host)("agent", trust=custom, co_dir=Path(".co"))
+        with tempfile.TemporaryDirectory() as tmp:
+            custom = TrustAgent("open", co_dir=Path(tmp) / "custom" / ".co")
+            scope_host(fake_host)("agent", trust=custom, co_dir=Path(tmp) / "host" / ".co")
 
         self.assertIs(captured["trust"], custom)
+
+    def test_wrapper_is_idempotent(self) -> None:
+        def fake_host(_agent, **_kwargs):
+            return None
+
+        wrapped = scope_host(fake_host)
+        self.assertIs(scope_host(wrapped), wrapped)
 
     def test_runner_path_covers_both_generated_templates(self) -> None:
         custom = creator.render("Custom", creator.DEFAULT_MODEL, 8000, [], "open")

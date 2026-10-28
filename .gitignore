@@ -3,6 +3,7 @@
 
 # ── Python ──
 __pycache__/
+.pytest_cache/
 *.py[cod]
 *.egg-info/
 .eggs/
@@ -14,6 +15,9 @@ venv/
 # ── Runtime / local state ──
 *.log
 .co-studio/
+# Local QA screenshots, evaluation outputs and native dependency/build caches.
+# Keep these on disk for reproduction; do not stage them with source changes.
+/.artifacts/
 
 # ── Xcode / Swift (macOS app under macos/) ──
 DerivedData/

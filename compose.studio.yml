@@ -1,0 +1,35 @@
+# Source distribution, isolated local prototype; no credentials or host Agent data mounted.
+services:
+  db:
+    image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+    environment:
+      POSTGRES_DB: studio
+      POSTGRES_USER: studio
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - studio-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U studio -d studio"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  app:
+    build: .
+    init: true
+    environment:
+      STUDIO_DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      STUDIO_AUTO_AUTH: "0"
+    ports:
+      - "127.0.0.1:9904:8080"
+    volumes:
+      - studio-home:/home/studio/.co-studio
+    depends_on:
+      db:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    stop_grace_period: 30s
+volumes:
+  studio-db:
+  studio-home:

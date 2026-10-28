@@ -994,15 +994,15 @@ body.shell-ready #app.is-settings #settings-view { transition: opacity 0.3s ease
 body.shell-ready .settings-inner { transition: transform 0.42s cubic-bezier(0.32, 1.1, 0.4, 1); }
 
 /* ---- logs: master–detail (running-agent list | selected agent's live detail) ---- */
-#logs-view {
+#logs-view, #history-view {
   position: absolute; inset: 0 0 0 244px; z-index: 30;   /* 244px == sidebar width → fills the content pane */
   background: var(--canvas); overflow: hidden;
   display: flex; flex-direction: column;                  /* content-head + two-pane body */
   opacity: 0; visibility: hidden; pointer-events: none;   /* toggled by #app.is-logs */
 }
-#app.is-logs #logs-view { opacity: 1; visibility: visible; pointer-events: auto; }
-body.shell-ready #logs-view { transition: opacity 0.3s ease, visibility 0s linear 0.3s; }
-body.shell-ready #app.is-logs #logs-view { transition: opacity 0.3s ease, visibility 0s; }
+#app.is-logs #logs-view, #app.is-history #history-view { opacity: 1; visibility: visible; pointer-events: auto; }
+body.shell-ready #logs-view, body.shell-ready #history-view { transition: opacity 0.3s ease, visibility 0s linear 0.3s; }
+body.shell-ready #app.is-logs #logs-view, body.shell-ready #app.is-history #history-view { transition: opacity 0.3s ease, visibility 0s; }
 .logs-body { flex: 1 1 auto; display: flex; gap: 16px; min-height: 0; padding: 18px 24px; }
 
 /* master — running-agent list */
@@ -1076,6 +1076,117 @@ body.shell-ready #app.is-logs #logs-view { transition: opacity 0.3s ease, visibi
 .ld-btn svg { width: 15px; height: 15px; }
 .ld-copy-soft { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
 .ld-copy-soft:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); border-color: transparent; filter: none; }
+
+/* History extends the existing Logs layout, fields and buttons (no second design system). */
+.history-agent-field { margin: 0; }
+.history-agent-field select { height: 34px; padding-top: 0; padding-bottom: 0; border-radius: 10px; border-color: var(--hairline); font-size: 13.5px; text-overflow: ellipsis; }
+.history-master .logs-master-head b { font-weight: inherit; }
+.history-session-item { flex: none; }
+.history-session-item .logs-item-meta { font-family: var(--font-ui); }
+.history-empty-message { margin: 0; padding: 0 14px; font-size: 14px; white-space: normal; pointer-events: none; }
+.history-detail { padding: 0; }
+.history-scroll { overflow-y: auto; min-height: 0; padding: 18px; scrollbar-width: thin; }
+.history-session-head h2 { margin: 0 0 6px; font: 600 18px var(--font-brand); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-update-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.history-update-notice[hidden] { display: none; }
+.history-update-notice .btn { padding: 5px 10px; font-size: 12px; }
+.history-recovery { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.history-recovery[hidden] { display: none; }
+.history-recovery .btn { padding: 5px 10px; font-size: 12px; }
+.history-note { margin: 5px 0; color: var(--ink-2); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.history-note.is-error { color: var(--danger); }
+.history-note.history-empty-message { margin: 0; font-size: 14px; }
+.history-notice { padding: 10px 12px; border: 1px solid var(--hairline-strong); border-radius: 10px; background: var(--accent-soft); color: var(--ink); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.history-master .history-notice { max-height: 110px; overflow-y: auto; flex: none; margin: 0; }
+.history-section-title { margin: 18px 0 10px; font: 600 15px var(--font-brand); }
+.history-section-title span { color: var(--ink-3); font: 400 12px var(--font-ui); }
+.history-stack { display: flex; flex-direction: column; gap: 10px; }
+.history-turn, .history-event { border: 1px solid var(--hairline); border-radius: 12px; background: var(--elevated2); padding: 12px; min-width: 0; }
+.history-turn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.history-turn h4 { margin: 0; font-size: 13px; }
+.prompt-editor { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--hairline); }
+.prompt-editor > summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+.prompt-editor .field { margin: 12px 0; }
+.prompt-editor textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 160px; padding: 10px; font: 12px/1.6 var(--font-mono); color: var(--ink); background: var(--elevated2); border: 1px solid var(--hairline-strong); border-radius: 10px; }
+.prompt-diff { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 280px; overflow-y: auto; font: 11px/1.6 var(--font-mono); }
+.prompt-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.prompt-editor .btn { font-size: 12px; padding: 7px 10px; }
+/* Knowledge and approvals reuse the existing Logs shell and theme tokens. */
+.workspace-view { position: absolute; inset: 0 0 0 244px; z-index: 30; background: var(--canvas); overflow: hidden; display: flex; flex-direction: column; opacity: 0; visibility: hidden; pointer-events: none; }
+#app.is-knowledge #knowledge-view, #app.is-approvals #approvals-view { opacity: 1; visibility: visible; pointer-events: auto; }
+body.shell-ready .workspace-view { transition: opacity .3s ease, visibility 0s linear .3s; }
+body.shell-ready #app.is-knowledge #knowledge-view, body.shell-ready #app.is-approvals #approvals-view { transition: opacity .3s ease, visibility 0s; }
+.workspace-master { gap: 8px; }
+.workspace-list-space { position: relative; flex: 1; display: flex; flex-direction: column; min-height: 100px; }
+.workspace-empty { position: absolute; inset: 0; margin: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 12px; color: var(--ink-2); font-size: 14px; pointer-events: none; }
+.workspace-detail { overflow-y: auto; gap: 8px; scrollbar-width: thin; }
+.workspace-detail-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.workspace-detail-heading h2, .workspace-title { margin: 0; font: 600 18px var(--font-brand); overflow-wrap: anywhere; }
+.workspace-badge { border-radius: 99px; padding: 4px 9px; background: var(--accent-soft); color: var(--accent); font-size: 11px; }
+.workspace-code { padding: 14px; margin: 0; border: 1px solid var(--hairline); border-radius: 10px; background: var(--elevated2); font: 12px/1.6 var(--font-mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.workspace-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+.workspace-actions .btn { font-size: 12px; padding: 8px 12px; }
+.workspace-mode { margin: 0; flex: 1; max-width: 180px; }
+.workspace-mode select { padding: 8px 10px; font-size: 12px; }
+.workspace-detail textarea { width: 100%; box-sizing: border-box; padding: 12px; background: var(--elevated2); border: 1px solid var(--hairline-strong); border-radius: 10px; color: var(--ink); font: 13px/1.6 var(--font-ui); resize: vertical; }
+.workspace-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.workspace-unavailable { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--ink-2); font-size: 14px; }
+.workspace-result-empty { padding: 40px 16px; text-align: center; color: var(--ink-2); font-size: 14px; }
+.knowledge-evidence h3 { margin: 0 0 6px; font-size: 14px; }
+.knowledge-evidence .history-text { margin-bottom: 8px; }
+.knowledge-citation { color: var(--ink-3); overflow-wrap: anywhere; font: 11px/1.5 var(--font-mono); }
+.knowledge-selection { padding: 12px; border: 1px solid var(--hairline); border-radius: 10px; background: var(--elevated2); margin-bottom: 16px; }
+.knowledge-selection strong { font-size: 13px; }
+.knowledge-selection .btn { font-size: 11px; padding: 6px 9px; margin-top: 6px; }
+.knowledge-finding { border-left: 2px solid var(--accent); padding-left: 12px; }
+.knowledge-consent { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; line-height: 1.6; margin-top: 12px; }
+.knowledge-consent input { flex: none; margin-top: 3px; }
+#knowledge-generation-confirm .field { margin-top: 12px; }
+.knowledge-hypothesis h3 { font-size: 14px; margin: 0 0 10px; }
+.knowledge-hypothesis blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--hairline); }
+.knowledge-next-steps { font-size: 13px; line-height: 1.6; padding-left: 20px; }
+.tool-policy-option { display: flex; align-items: center; gap: 9px; font-size: 13px; margin: 14px 0; }
+.tool-policy-option input { accent-color: var(--accent); }
+#tool-config input[type="number"] { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid var(--hairline-strong); border-radius: 9px; background: var(--elevated2); color: var(--ink); font: 13px var(--font-ui); }
+#tools-catalog { padding-left: 20px; }
+#tools-catalog li { margin: 8px 0; }
+.workspace-empty[hidden], .workspace-unavailable[hidden], #knowledge-body[hidden], .workspace-detail[hidden] { display: none; }
+.history-turn-timeline[hidden] { display: none; }
+.history-turn-timeline { margin-top: 14px; border-top: 1px solid var(--hairline); padding-top: 12px; }
+.execution-timeline { list-style: none; padding: 0 0 0 8px; margin: 0; }
+.execution-step { position: relative; border-left: 1px solid var(--hairline-strong); padding: 0 0 14px 18px; }
+.execution-step:last-child { padding-bottom: 0; border-color: transparent; }
+.execution-step::before { content: ''; position: absolute; left: -4px; top: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.execution-step.is-error::before { background: var(--danger); }
+.execution-step summary { cursor: pointer; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.execution-step summary .history-note { margin-left: 8px; font-size: 11px; }
+.execution-step.is-error .execution-label { color: var(--danger); }
+.execution-step pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px/1.6 var(--font-mono); background: var(--elevated2); padding: 8px; border-radius: 8px; }
+.context-report { margin: 8px 0; }
+.context-report-metrics { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 5px 16px; margin: 10px 0; font-size: 12px; line-height: 1.5; }
+.context-report-metrics dt { color: var(--ink-2); }
+.context-report-metrics dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.context-report-raw { color: var(--ink-3); margin-top: 10px; }
+.history-text { margin: 4px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+.history-full-input { margin: 0 0 12px; }
+.history-full-input summary { color: var(--ink-2); cursor: pointer; font-size: 12px; }
+.history-label { margin: 12px 0 4px; color: var(--ink-3); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.history-event summary { cursor: pointer; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.history-event pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 11.5px/1.6 var(--font-mono); margin-bottom: 0; }
+.history-event-head { margin-top: 20px; }
+.history-event-head .field { margin: 8px 0; }
+.history-event-head select { padding-top: 7px; padding-bottom: 7px; font-size: 12px; }
+.history-scroll > .btn { margin-top: 10px; }
+.history-footnote { color: var(--ink-3); font-size: 11px; line-height: 1.5; margin: 20px 0 0; }
+.history-footnote summary { cursor: pointer; }
+.history-advanced { margin: 8px 0; font-size: 12px; color: var(--ink-2); }
+.history-advanced > summary { cursor: pointer; }
+#history-versions-section { margin-top: 8px; }
+#history-versions-panel { margin-top: 8px; }
+#history-more-versions { margin-top: 8px; }
+.history-version-item { text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.history-version-item.is-selected { border-color: var(--accent); background: var(--accent-soft); }
+.history-session-item:focus-visible, .history-event summary:focus-visible, .history-full-input summary:focus-visible, .history-advanced > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .wizard-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
 .wizard-head h2 { margin: 0; font-family: var(--font-brand); font-size: 22px; font-weight: 600; }
 .wizard-dots { display: flex; align-items: center; gap: 6px; }

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import yaml
 
 from co_studio import config, creator, registry
 
@@ -32,9 +35,17 @@ class CoAiRenderingTests(unittest.TestCase):
 
         self.assertIn("agent = create_coding_agent(model=MODEL, co_dir=CO_DIR)", rendered)
         self.assertIn("host(agent,", rendered)
-        self.assertIn("invite_code: [team_code-1]", rendered)
-        self.assertIn("default: deny", rendered)
-        self.assertNotIn("payment:", rendered)
+        trust_assignment = next(
+            node for node in ast.parse(rendered).body
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "TRUST_POLICY"
+                for target in node.targets
+            )
+        )
+        policy = yaml.safe_load(ast.literal_eval(trust_assignment.value).split("---", 2)[1])
+        self.assertEqual(policy["onboard"]["invite_code"], ["team_code-1"])
+        self.assertEqual(policy["default"], "deny")
+        self.assertNotIn("payment", policy["onboard"])
         compile(rendered, "agent.py", "exec")
 
     def test_invite_code_rejects_policy_injection(self) -> None:

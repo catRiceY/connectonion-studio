@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+from pathlib import Path
 
 
 def _patch_scoped_trust() -> None:
@@ -57,15 +58,40 @@ def main() -> None:
     """Patch announce.get_ips, then run the agent script as __main__ in this process."""
     if len(sys.argv) != 2:
         sys.exit("usage: co_studio_runner.py <agent.py>")
+    # 1.9.2 loads project credentials in host(), but the co-ai preset constructs
+    # its LLM before calling host. Cover existing generated scripts as well.
+    from connectonion.environment import load_project_env
+
+    script = Path(sys.argv[1]).resolve()
+    load_project_env(script.parent / ".env")
     try:
         _patch_scoped_trust()
     except Exception as exc:  # noqa: BLE001 — surface compatibility failures in the run log
         sys.exit(f"[co-studio] scoped trust setup failed: {exc!r}")
+    # Freeze a selected custom-Agent base Prompt for this process. The adapter
+    # leaves host untouched when there are no saved revisions, and never rewrites
+    # agent.py or claims that restored historical sessions use this revision.
+    try:
+        import connectonion
+        from co_studio.mcp_agent import wrap_host_for_studio_tools
+        from co_studio.context_runtime import wrap_host_for_context
+        from co_studio.context_policy import ContextPolicy
+        from co_studio.approvals import tool_config
+        from co_studio.prompt_versions import wrap_host_for_prompt
+
+        connectonion.host = wrap_host_for_studio_tools(connectonion.host, script)
+        budget = tool_config(script.parent)["context_budget"]
+        policy = ContextPolicy(input_budget=budget) if budget is not None else None
+        connectonion.host = wrap_host_for_context(connectonion.host, script, policy=policy)
+        # Prompt is outermost: its guard must inspect the original factory.
+        connectonion.host = wrap_host_for_prompt(connectonion.host, script)
+    except Exception:
+        sys.exit("[co-studio] selected Prompt or Studio tool/context configuration is unavailable; launch stopped")
     try:
         _patch_get_ips()
     except Exception as exc:  # noqa: BLE001 — a framework refactor must not block launch
         print(f"[co-studio] get_ips patch failed: {exc!r}", flush=True)
-    runpy.run_path(sys.argv[1], run_name="__main__")
+    runpy.run_path(str(script), run_name="__main__")
 
 
 if __name__ == "__main__":

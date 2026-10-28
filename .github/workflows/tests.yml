@@ -1,0 +1,83 @@
+name: Offline regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: regression-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    name: Python 3.12 / Node 24
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      UV_PYTHON: "3.12.13"
+      UV_NO_PROGRESS: "1"
+      STUDIO_TEST_HISTORY_ADMIN_CONFIG: tests/integration/ci-database.json
+      STUDIO_TEST_KNOWLEDGE_CONFIG: tests/integration/ci-database.json
+
+    services:
+      pgvector:
+        image: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
+        env:
+          POSTGRES_USER: studio_ci
+          POSTGRES_PASSWORD: ci-disposable-test-only
+          POSTGRES_DB: studio_ci
+        ports:
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U studio_ci -d studio_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.29"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Node.js for frontend behavior tests
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.18.0"
+          package-manager-cache: false
+
+      - name: Install locked dependencies
+        run: |
+          uv python install "$UV_PYTHON"
+          uv sync --locked --extra history --extra mcp --extra knowledge
+
+      - name: Run offline regression suite
+        env:
+          UV_OFFLINE: "1"
+        run: |
+          node --version
+          uv run --locked --extra history --extra mcp --extra knowledge pytest -q
+
+      - name: Check whitespace and unchanged lockfile
+        run: |
+          if git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            git diff --check HEAD^ HEAD
+          else
+            git show --format= --check HEAD
+          fi
+          git diff --check
+          git diff --exit-code -- uv.lock
+
+      - name: Build source container (no push or deployment)
+        run: docker build --tag connectonion-studio:ci .

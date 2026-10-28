@@ -16,10 +16,10 @@ python -m pip install --quiet --upgrade pip
 if [ -n "${CONNECTONION_PATH:-}" ]; then
   echo "→ dev mode: connectonion from $CONNECTONION_PATH"
   pip install -e "$CONNECTONION_PATH"
-  pip install fastapi "uvicorn[standard]" segno
+  pip install fastapi "uvicorn[standard]" segno "websockets>=15.0.1,<18" "python-socks[asyncio]>=2.4,<3"
   pip install --no-deps -e .
 else
-  pip install -e .   # pulls connectonion from git source (never PyPI)
+  pip install -e .   # installs the stable ConnectOnion version pinned in pyproject.toml
 fi
 
 echo

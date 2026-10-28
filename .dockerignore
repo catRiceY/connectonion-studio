@@ -1,0 +1,16 @@
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!co_studio/
+!co_studio/**
+!deploy/
+!deploy/**
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/*.key
+**/keys.env
+**/.co
+**/.co-studio

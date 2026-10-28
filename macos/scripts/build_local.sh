@@ -1,7 +1,8 @@
 #!/bin/bash
 #
 # LOCAL test build (NOT for release): bundles the LOCAL co_studio (your working tree, not PyPI) + your
-# Swift changes, Developer-ID signed so Sparkle works, NO notarization / dmg. Reuses dist/python.
+# Swift changes, Developer-ID signed so Sparkle works, NO notarization / dmg.
+# Reuses only the standalone interpreter; runtime dependencies are synced from uv.lock.
 #
 #   ./scripts/build_local.sh                          # v0.1.5 build 2 (so it DETECTS the 0.1.6 appcast)
 #   APP_VERSION=0.1.7 BUILD_NUM=4 ./scripts/build_local.sh
@@ -16,14 +17,9 @@ ENT="$ROOT/scripts/python.entitlements"
 APP="$DIST/ConnectOnionStudio-local.app"
 XC=/Applications/Xcode.app/Contents/Developer
 
-echo "[1/5] reinstall LOCAL co_studio into dist/python"
-[ -x "$DIST/python/bin/python3" ] || { echo "  no dist/python — run build_release.sh once first"; exit 1; }
-"$DIST/python/bin/python3" -m pip install --force-reinstall --no-deps --disable-pip-version-check "$REPO" >/dev/null
-"$DIST/python/bin/python3" - <<'PY'
-import co_studio, pathlib
-f = pathlib.Path(co_studio.__file__).parent / "frontend" / "js" / "app.js"
-print("  bundled app.js has the fix (syncUpdate):", "syncUpdate" in f.read_text())
-PY
+echo "[1/5] install LOCAL source + locked history/mcp/knowledge runtime into dist/python"
+[ -x "$DIST/python/bin/python3" ] || { echo "  prepare standalone Python at dist/python first (see macos/README.md); no signing or download has run"; exit 1; }
+"$DIST/python/bin/python3" -I "$ROOT/scripts/bundle_runtime.py" install "$DIST/python/bin/python3" --mode source
 find "$DIST/python" -name __pycache__ -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 echo "[2/5] xcodebuild Release (v$APP_VERSION build $BUILD_NUM, unsigned)"

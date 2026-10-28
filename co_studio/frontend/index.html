@@ -108,6 +108,20 @@
           </span>
           <span class="nav-label">Logs</span>
         </a>
+        <a class="nav-item" id="open-history" data-view="history" role="button" tabindex="0">
+          <span class="nav-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          </span>
+          <span class="nav-label">History</span>
+        </a>
+        <a class="nav-item" id="open-knowledge" data-view="knowledge" role="button" tabindex="0">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5V5a2 2 0 0 1 2-2h14v18H6a2 2 0 0 1 0-4h14"/><path d="M8 7h8M8 11h6"/></svg></span>
+          <span class="nav-label">Knowledge</span>
+        </a>
+        <a class="nav-item" id="open-approvals" data-view="approvals" role="button" tabindex="0">
+          <span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6z"/><path d="m8 12 3 3 5-6"/></svg></span>
+          <span class="nav-label">Approvals</span>
+        </a>
         <a class="nav-item" id="open-market" data-view="skills" role="button" tabindex="0">
           <span class="nav-ico" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.94 15.5A2 2 0 0 0 8.5 14.06l-6.14-1.58a.5.5 0 0 1 0-.96L8.5 9.94A2 2 0 0 0 9.94 8.5l1.58-6.14a.5.5 0 0 1 .96 0L14.06 8.5A2 2 0 0 0 15.5 9.94l6.14 1.58a.5.5 0 0 1 0 .96L15.5 14.06a2 2 0 0 0-1.44 1.44l-1.58 6.14a.5.5 0 0 1-.96 0z"/><path d="M20 3v4"/><path d="M22 5h-4"/><path d="M4 17v2"/><path d="M5 18H3"/></svg>
@@ -155,7 +169,7 @@
             <input id="agent-search" type="text" placeholder="Search agents…"
                    autocomplete="off" spellcheck="false" aria-label="Search agents">
           </div>
-          <a class="head-github" href="https://github.com/EvanYifanYang/connectonion-studio"
+          <a class="head-github" href="https://github.com/catRiceY/connectonion-studio"
              target="_blank" rel="noopener" title="View on GitHub" aria-label="View on GitHub">
             <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
           </a>
@@ -436,9 +450,71 @@
         </div>
         <div class="settings-group">
           <h3>About</h3>
-          <p class="set-about">A local cockpit to build, run, and test agents with <b>ConnectOnion</b>, the open-source Python agent framework. <a href="https://github.com/EvanYifanYang/connectonion-studio" target="_blank" rel="noopener">Studio on GitHub</a> · <a href="https://github.com/openonion/connectonion" target="_blank" rel="noopener">ConnectOnion on GitHub</a></p>
+          <p class="set-about">A local cockpit to build, run, and test agents with <b>ConnectOnion</b>, the open-source Python agent framework. <a href="https://github.com/catRiceY/connectonion-studio" target="_blank" rel="noopener">Studio on GitHub</a> · <a href="https://github.com/openonion/connectonion" target="_blank" rel="noopener">ConnectOnion on GitHub</a></p>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- Saved history shares Logs' master/detail primitives; SSE observes saves, never starts Agents. -->
+  <div id="history-view" hidden>
+    <header class="content-head">
+      <div class="head-titles">
+        <h1>History</h1>
+        <p class="page-subtitle">Saved execution history</p>
+      </div>
+    </header>
+    <div class="logs-body">
+      <aside class="logs-master history-master">
+        <div class="logs-master-head"><b id="history-list-label">Sessions</b> <span id="history-count"></span></div>
+        <label class="field history-agent-field"><select id="history-agent" aria-label="History agent" title="Choose an agent, including stopped agents"></select></label>
+        <p id="history-sync-message" class="history-note" role="status" hidden></p>
+        <p id="history-warning" class="history-notice" role="status" hidden></p>
+        <p id="history-list-message" class="history-note" role="status" hidden></p>
+        <div id="history-recovery" class="history-recovery" hidden>
+          <span id="history-connection-error" class="history-note" role="status" hidden></span>
+          <button id="history-refresh" class="btn btn-outline" type="button" hidden>Retry</button>
+        </div>
+        <div id="history-sessions" class="logs-list" aria-label="Saved sessions"></div>
+        <button id="history-more-sessions" class="btn btn-outline" type="button" hidden>Load more sessions</button>
+      </aside>
+      <div id="history-empty" class="logs-detail-empty" role="status">Select a session to view its history.</div>
+      <section id="history-detail" class="logs-detail history-detail" aria-label="Session history" hidden>
+        <div class="history-scroll">
+          <header class="history-session-head">
+            <h2 id="history-session-id"></h2>
+            <p id="history-session-meta" class="history-note"></p>
+            <div id="history-update-notice" class="history-update-notice" hidden><span class="history-note">A newer saved version is available.</span><button id="history-latest" class="btn btn-outline" type="button">View latest</button></div>
+            <details id="history-advanced" class="history-advanced">
+              <summary>Session details</summary>
+              <p id="history-session-status" class="history-note"></p>
+              <p id="history-capture-meta" class="history-note" hidden></p>
+              <div id="history-versions-section" hidden>
+                <button id="history-versions-toggle" class="btn btn-outline" type="button" aria-expanded="false" aria-controls="history-versions-panel">History versions</button>
+                <div id="history-versions-panel" hidden>
+                  <p id="history-version-message" class="history-note" role="status" hidden></p>
+                  <div id="history-versions" class="history-stack" aria-label="Session versions"></div>
+                  <button id="history-more-versions" class="btn btn-outline" type="button" hidden>Load more versions</button>
+                </div>
+              </div>
+            </details>
+          </header>
+          <p id="history-detail-message" class="history-note" role="status" hidden></p>
+          <h3 class="history-section-title">Conversation <span id="history-turn-count"></span></h3>
+          <div id="history-turns" class="history-stack"></div>
+          <button id="history-more-turns" class="btn btn-outline" type="button" hidden>Load more turns</button>
+          <details class="history-advanced history-all-events"><summary>All execution events</summary>
+          <div id="history-event-section" class="history-event-head">
+            <h3 class="history-section-title">Execution events <span id="history-event-count"></span></h3>
+            <label class="field"><span>Show events</span><select id="history-event-filter"><option value="all">All turns + unassigned</option></select></label>
+          </div>
+          <p id="history-event-message" class="history-note" role="status" hidden></p>
+          <div id="history-events" class="history-stack"></div>
+          <button id="history-more-events" class="btn btn-outline" type="button" hidden>Load more events</button>
+          </details>
+          <details class="history-footnote"><summary>About this history</summary><p>History uses the configured archive, or saved framework files when no archive is configured. Archive versions are immutable and updates appear automatically unless a version is pinned. In file-only mode, reopen History to read new sessions. Retry checks saved history; it does not restart an Agent or the sync worker. Missing fields mean “not recorded”. Source status and finish reason are not task-success scores. This is not a live model stream. Credential masking is best-effort; review content before sharing.</p></details>
+        </div>
+      </section>
     </div>
   </div>
 
@@ -505,6 +581,68 @@
       <div class="logs-detail-empty" id="logs-detail-empty">Select an agent to watch its live logs.</div>
     </div>
   </div>
+
+  <section id="approvals-view" class="workspace-view" hidden aria-label="Tool approvals">
+    <header class="content-head"><div class="head-titles"><h1>Approvals</h1><p class="page-subtitle">Review individual tool calls before execution.</p></div></header>
+    <div class="logs-body">
+      <aside class="logs-master workspace-master">
+        <label class="field history-agent-field"><span>Agent</span><select id="approval-agent"></select></label>
+        <label class="field history-agent-field"><span>Requests <span id="approval-count">0</span></span><select id="approval-filter"><option value="pending">Pending</option><option value="all">All requests</option></select></label>
+        <p id="approval-message" class="history-note" role="status" hidden></p><button id="approval-retry" class="btn btn-outline btn-sm" type="button" hidden>Retry</button>
+        <div class="workspace-list-space"><div id="approval-list" class="logs-list"></div><p id="approval-empty" class="workspace-empty">No requests in this view.</p></div>
+      </aside>
+      <section id="approval-detail" class="logs-detail workspace-detail" hidden>
+        <div class="workspace-detail-heading"><h2 id="approval-tool"></h2><span id="approval-status" class="workspace-badge"></span></div>
+        <p id="approval-context" class="history-note"></p>
+        <p class="history-label">Requested arguments</p><pre id="approval-arguments" class="workspace-code"></pre>
+        <p class="history-note">Sensitive argument values may be redacted. Approval applies only to this exact call.</p>
+        <p id="approval-identity" class="history-note"></p><p id="approval-expiry" class="history-note"></p><p id="approval-reason" class="history-note" hidden></p>
+        <div class="workspace-actions"><button id="approval-approve" class="btn btn-primary" type="button" disabled>Approve this call</button><button id="approval-reject" class="btn btn-outline" type="button" disabled>Reject</button></div>
+        <p id="approval-decision-message" class="history-note" role="status" hidden></p>
+      </section>
+      <div id="approval-detail-empty" class="logs-detail-empty">Select a request to review.</div>
+    </div>
+  </section>
+
+  <section id="knowledge-view" class="workspace-view" hidden aria-label="Knowledge index">
+    <header class="content-head"><div class="head-titles"><h1>Knowledge</h1><p class="page-subtitle">Search versioned documents with traceable evidence.</p></div><div class="head-actions"><button id="knowledge-add" class="btn btn-outline" type="button" disabled>＋ Add document</button></div></header>
+    <div id="knowledge-unavailable" class="workspace-unavailable"><p id="knowledge-unavailable-text">Loading knowledge index…</p><button id="knowledge-status-retry" class="btn btn-outline btn-sm" type="button" hidden>Retry</button></div>
+    <div id="knowledge-body" class="logs-body" hidden>
+      <aside class="logs-master workspace-master">
+        <label class="field history-agent-field"><span>Sources</span><select id="knowledge-collection" disabled><option value="public">Public documents</option></select></label>
+        <div class="logs-master-head">Documents <span id="knowledge-count">0</span></div><p id="knowledge-scope-note" class="history-note">Explicitly imported documents.</p>
+        <p id="knowledge-message" class="history-note" role="status" hidden></p><button id="knowledge-retry" class="btn btn-outline btn-sm" type="button" hidden>Retry</button>
+        <div class="workspace-list-space"><div id="knowledge-list" class="logs-list"></div><p id="knowledge-empty" class="workspace-empty">No documents yet.</p></div>
+        <button id="knowledge-more" class="btn btn-outline btn-sm" type="button" hidden>More documents</button><p id="knowledge-model" class="history-note"></p>
+      </aside>
+      <section class="logs-detail workspace-detail">
+        <div id="knowledge-explore">
+          <div id="knowledge-selection" class="knowledge-selection" hidden><strong id="knowledge-selected-title"></strong><p id="knowledge-selected-source" class="history-note"></p><button id="knowledge-delete" class="btn btn-outline btn-sm" type="button">Remove from index</button></div>
+          <label class="field"><span>Find evidence</span><textarea id="knowledge-query" rows="3" maxlength="2000" placeholder="Describe an issue or ask about the indexed documents…"></textarea></label>
+          <div class="workspace-actions"><label class="field workspace-mode"><span class="sr-only">Retrieval mode</span><select id="knowledge-mode"><option value="hybrid">Hybrid search</option><option value="bm25">BM25</option><option value="vector">Vector search</option></select></label><button id="knowledge-search" class="btn btn-primary" type="button" disabled>Search</button><button id="knowledge-diagnose" class="btn btn-outline" type="button" disabled>Evidence summary</button><button id="knowledge-generate" class="btn btn-outline" type="button" disabled>中文诊断</button></div>
+          <p class="history-note">Search / Evidence summary 不调用语言模型；中文诊断需要单独确认。</p>
+          <div id="knowledge-generation-confirm" class="knowledge-selection" hidden>
+            <strong>生成中文诊断</strong>
+            <p class="history-note">问题和所选来源中的检索片段将发送给模型服务，可能产生费用。请勿提交密钥或未授权外发的资料；此操作不会执行工具或修改 Agent。</p>
+            <label class="field"><span>Model ID（使用本机已配置凭据）</span><input id="knowledge-generation-model" type="text" maxlength="128" autocomplete="off" placeholder="填写要使用的模型 ID"></label>
+            <label class="knowledge-consent"><input id="knowledge-generation-consent" type="checkbox"> 我同意发送这些内容并承担可能的模型费用</label>
+            <div class="workspace-actions"><button id="knowledge-generation-start" class="btn btn-primary" type="button" disabled>确认并生成</button><button id="knowledge-generation-dismiss" class="btn btn-ghost" type="button">返回检索</button></div>
+          </div>
+          <button id="knowledge-generation-cancel" class="btn btn-outline btn-sm" type="button" hidden>取消生成</button>
+          <p id="knowledge-query-message" class="history-note" role="status" hidden></p><div id="knowledge-results" class="history-stack"></div>
+        </div>
+        <div id="knowledge-import" hidden>
+          <h2 class="workspace-title">Add document</h2><p class="history-note">Paste content you are authorized to index. Source links are labels, not fetched pages.</p>
+          <label class="field"><span>Title</span><input id="knowledge-title" type="text" maxlength="240" autocomplete="off"></label>
+          <label class="field"><span>Source URI (https:// or studio://)</span><input id="knowledge-source" type="text" maxlength="2000" autocomplete="off" placeholder="https://… or studio://… — no credentials"></label>
+          <div class="workspace-fields"><label class="field"><span>Version</span><input id="knowledge-version" type="text" value="1" maxlength="128"></label><label class="field"><span>License / usage permission</span><input id="knowledge-license" type="text" maxlength="240" placeholder="e.g. Apache-2.0, internal use"></label></div>
+          <label class="field"><span>Document text</span><textarea id="knowledge-text" rows="9" maxlength="512000" spellcheck="false"></textarea></label>
+          <div class="workspace-actions"><button id="knowledge-import-save" class="btn btn-primary" type="button">Index document</button><button id="knowledge-import-cancel" class="btn btn-ghost" type="button">Cancel</button></div>
+          <p id="knowledge-import-message" class="history-note" role="status" hidden></p>
+        </div>
+      </section>
+    </div>
+  </section>
 
   <!-- QR quick view -->
   <div id="modal-qr" class="modal-overlay" hidden>
@@ -629,6 +767,35 @@
         </div>
 
         <div class="detail-groups" id="d-info"></div>
+        <details id="prompt-editor" class="prompt-editor">
+          <summary>Prompt versions</summary>
+          <p class="history-note">Base prompt for new conversations after the next Studio launch of this Agent. Existing conversations may retain their original prompt; historical version binding is not yet recorded.</p>
+          <p id="prompt-message" class="history-note" role="status" hidden></p>
+          <div id="prompt-form" hidden>
+            <p id="prompt-base" class="history-note"></p>
+            <label class="field"><span>Base prompt</span><textarea id="prompt-text" rows="10" maxlength="65536" spellcheck="false"></textarea></label>
+            <label class="field"><span>Compare with</span><select id="prompt-versions"></select></label>
+            <details class="history-advanced"><summary>Changes compared with selected version</summary><pre id="prompt-diff" class="prompt-diff"></pre></details>
+            <div class="prompt-actions"><button id="prompt-save" class="btn btn-primary" type="button">Save new version</button><button id="prompt-restore" class="btn btn-outline" type="button">Restore selected</button></div>
+          </div>
+          <button id="prompt-reload" class="btn btn-outline" type="button" title="Discard any local draft and reload the saved version">Reload / discard draft</button>
+        </details>
+        <details id="tool-config" class="prompt-editor">
+          <summary>Studio tools &amp; approvals</summary>
+          <p class="history-note">Changes apply on the next start. Saving does not restart this Agent.</p>
+          <p id="tools-message" class="history-note" role="status" hidden></p>
+          <div id="tools-form" hidden>
+            <label class="tool-policy-option"><input id="tools-mcp" type="checkbox"><span>Enable MCP &amp; knowledge tools</span></label>
+            <label class="tool-policy-option"><input id="tools-approvals" type="checkbox"><span>Require approval for other tools</span></label>
+            <p class="history-note">When enabled, calls outside the Studio read-only allowlist wait for individual approval.</p>
+            <label class="field"><span>Approval timeout (seconds)</span><input id="tools-timeout" type="number" min="30" max="300" step="1" value="120"></label>
+            <label class="field"><span>Context budget (estimated tokens)</span><input id="tools-context-budget" type="number" min="128" max="2000000" step="1" placeholder="Disabled — leave empty"></label>
+            <p class="history-note">Optional context compression budget; an estimate, not a strict model token limit.</p>
+            <details class="history-advanced"><summary>Available tools</summary><ul id="tools-catalog" class="history-note"></ul></details>
+            <div class="prompt-actions"><button id="tools-save" class="btn btn-primary" type="button">Save policy</button></div>
+          </div>
+          <button id="tools-reload" class="btn btn-outline" type="button">Reload policy</button>
+        </details>
         <div id="d-last-error" class="detail-error" hidden></div>
 
         <div class="detail-actions">

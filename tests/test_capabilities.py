@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+
+import yaml
 
 from co_studio import config, creator, registry
 from co_studio.api.agents import CreateAgentBody
@@ -92,8 +95,16 @@ class CapabilityPolicyTests(unittest.TestCase):
             "open",
             invite_code="build-team",
         )
-        self.assertIn("invite_code: [build-team]", rendered)
-        self.assertIn("default: deny", rendered)
+        trust_assignment = next(
+            node for node in ast.parse(rendered).body
+            if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "TRUST"
+                for target in node.targets
+            )
+        )
+        policy = yaml.safe_load(ast.literal_eval(trust_assignment.value).split("---", 2)[1])
+        self.assertEqual(policy["onboard"]["invite_code"], ["build-team"])
+        self.assertEqual(policy["default"], "deny")
         self.assertIn("agent.tools.remove(\"wait_for_manual_login\")", rendered)
         self.assertIn("Side-effecting commands require explicit approval", rendered)
         self.assertIn("All file operations are confined to this Agent's workspace", rendered)

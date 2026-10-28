@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import importlib
 import inspect
 import re
 from typing import Any
@@ -37,6 +38,7 @@ _FRAMEWORK_CHECKS = (
 )
 _IDENTITY_CHECK = "identity in ~/.co"
 _KEY_CHECK = "~/.co/keys.env has OPENONION_API_KEY"
+_RELAY_DEPS_CHECK = "relay transport supports SOCKS proxies"
 
 
 def run_doctor() -> list[dict[str, Any]]:
@@ -74,6 +76,16 @@ def run_doctor() -> list[dict[str, Any]]:
             add(_FRAMEWORK_CHECKS[3], False, repr(exc))
 
     try:
+        transport = importlib.import_module("websockets.asyncio.client")
+        supported = callable(getattr(transport, "SocksProxy", None))
+        add(_RELAY_DEPS_CHECK, supported,
+            "SOCKS dependency loaded; relay connectivity checked separately" if supported else
+            "sync Studio dependencies (websockets>=15.0.1,<18 and python-socks[asyncio]); restart Studio/Agents")
+    except Exception:
+        add(_RELAY_DEPS_CHECK, False,
+            "sync Studio dependencies (websockets>=15.0.1,<18 and python-socks[asyncio]); restart Studio/Agents")
+
+    try:
         from connectonion import address as co_address
 
         ok = co_address.load(config.MAIN_CO_DIR) is not None
@@ -93,7 +105,7 @@ def status() -> dict[str, Any]:
     return {
         "co_auth_ok": ok_by_check.get(_IDENTITY_CHECK, False),
         "key_ok": ok_by_check.get(_KEY_CHECK, False),
-        "framework_ok": all(ok_by_check.get(check, False) for check in _FRAMEWORK_CHECKS),
+        "framework_ok": all(ok_by_check.get(check, False) for check in (*_FRAMEWORK_CHECKS, _RELAY_DEPS_CHECK)),
         "studio_version": _studio_version(),
         "agents_dir": str(config.AGENTS_DIR),
         # Read at request time so it reflects the REAL bound port (e.g. a --free-port desktop launch),
