@@ -21,6 +21,10 @@ Click toolkits to build an agent · scan its QR from the iOS app · watch live l
 
 ## Install
 
+The main branch includes **unreleased source-development features** described
+below. Published PyPI/macOS 0.1.8 artifacts do not automatically contain them;
+use the locked source checkout or source container for this engineering prototype.
+
 ```bash
 pipx install connectonion-studio      # or: pip install connectonion-studio
 co-studio                             # opens http://127.0.0.1:9900
@@ -31,6 +35,12 @@ That's it. The first launch **auto-creates your identity and activates your mana
 ## Desktop app (macOS)
 
 A native macOS app (SwiftUI + WKWebView) lives in [`macos/`](macos/) — the same cockpit in a real window with the traffic-light chrome and app icon. Build and run it from Xcode (`macos/ConnectOnionStudio/`); a signed `.dmg` for one-click install is on the way.
+
+[Native compile smoke](.github/workflows/native-build.yml) builds the Debug app on
+GitHub's macOS runner using the committed Swift package lock, with signing
+disabled. This checks **native shell compilation only**, not full bundled-runtime acceptance:
+it does not download/package Python, launch the app, sign, notarize or publish a
+release. A green run does not prove the bundled backend or installed app works.
 
 ## What it does
 
