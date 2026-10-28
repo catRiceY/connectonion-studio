@@ -181,11 +181,14 @@ def test_api_crud_conflict_and_cache(client, directory):
     assert client.post("/api/agents/demo/prompts", json={"base_version": identity, "text": "x", "path": "/tmp"}).status_code == 422
 
 
-@pytest.mark.parametrize("headers", [{"Origin": "https://evil.example"}, {"Sec-Fetch-Site": "cross-site"},
-    {"Origin": "null"}, {"Origin": "http://localhost:9900"}, {"Host": "evil.example"}])
-def test_api_rejects_cross_site_writes(client, directory, headers):
+@pytest.mark.parametrize("headers,expected", [
+    ({"Origin": "https://evil.example"}, 403), ({"Sec-Fetch-Site": "cross-site"}, 403),
+    ({"Origin": "null"}, 403), ({"Origin": "http://localhost:9900"}, 403),
+    ({"Host": "evil.example"}, 400),
+])
+def test_api_rejects_cross_site_writes(client, directory, headers, expected):
     response = client.post("/api/agents/demo/prompts", headers=headers, json={"base_version": "baseline", "text": "unsafe"})
-    assert response.status_code == 403
+    assert response.status_code == expected
     assert response.headers["cache-control"] == "no-store"
     assert not (directory / ".studio-prompts").exists()
 
