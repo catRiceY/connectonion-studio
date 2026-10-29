@@ -411,3 +411,57 @@ def test_ordinary_per_case_failure_does_not_automatically_abort_other_cases(tmp_
     _, result = run(tmp_path, complete=fail_once, case_ids=["prompt-zh", "prompt-en"])
     assert len(calls) == 2 and result["metrics"]["completed_outputs"] == 1
     assert result["status"] == "finished"
+
+
+def test_explicit_output_budget_frozen_in_manifest_and_forwarded_once(tmp_path):
+    from unittest.mock import Mock
+    completion = Mock(return_value=draft())
+    destination = tmp_path / "larger-budget"
+    run_trials(destination, model="test-only", max_calls=1, allow_model_calls=True,
+               case_ids=["prompt-zh"], max_output_tokens=4096,
+               _test_store=Store(), _test_complete=completion)
+    assert completion.call_count == 1
+    assert completion.call_args.kwargs["max_tokens"] == 4096
+    assert read(destination / "manifest.json")["max_output_tokens_requested"] == 4096
+    assert make_plan()["max_output_tokens_requested"] == 2048
+
+
+@pytest.mark.parametrize("budget", [255, 8193, True, 2048.0, "2048", None])
+def test_bad_output_budget_rejected_before_artifacts_or_calls(tmp_path, budget):
+    db = Store()
+    with pytest.raises(EvaluationError, match="budget"):
+        run_trials(tmp_path / "invalid", model="test-only", max_calls=1,
+                   allow_model_calls=True, case_ids=["prompt-zh"], max_output_tokens=budget,
+                   _test_store=db, _test_complete=lambda *a, **k: pytest.fail("no model call"))
+    assert not db.calls and not (tmp_path / "invalid").exists()
+
+
+def test_validation_failure_records_phase_without_values_or_unknown_field_names(tmp_path):
+    value = draft()
+    value["hypotheses"][0]["evidence"][0]["chunk_id"] = "SECRET-VALUE"
+    value["SECRET-FIELD"] = "SECRET-INPUT"
+    directory, result = run(tmp_path, complete=lambda *a, **k: value)
+    text = (directory / "results.jsonl").read_text()
+    row = json.loads(text)
+    assert row["failure_phase"] == "schema_validation"
+    assert row["validation_errors"] == [
+        {"type": "string_pattern_mismatch", "loc": ["hypotheses", 0, "evidence", 0, "chunk_id"]},
+        {"type": "extra_forbidden", "loc": ["<field>"]}]
+    assert "SECRET" not in text
+    assert result["metrics"]["completed_outputs"] == 0
+
+
+def test_framework_truncation_records_reason_usage_and_failure_without_partial_output(tmp_path):
+    from connectonion.core.exceptions import TruncatedResponseError
+    from connectonion.core.usage import TokenUsage
+    def fail(*a, **k):
+        raise TruncatedResponseError("offline", "length",
+                                     TokenUsage(input_tokens=30, output_tokens=2048), "SECRET-PARTIAL")
+    directory, result = run(tmp_path, complete=fail)
+    text = (directory / "results.jsonl").read_text()
+    row = json.loads(text)
+    assert row["failure_phase"] == "provider_call"
+    assert row["provider_finish_reason"] == "length"
+    assert row["usage"]["output_tokens"] == 2048
+    assert "SECRET" not in text
+    assert result["metrics"]["failed_or_not_run"] == 1

@@ -47,6 +47,10 @@ def build_fixture():
             return {"status": "evidence", "evidence": [hit], "findings": [], "next_steps": []}
     knowledge.configured_store = Store
     async def synthetic(request, body):
+        if "余额不足" in body["query"]:
+            from fastapi import HTTPException
+            status, detail = diagnostic_web.PROVIDER_FAILURES["insufficient_credits"]
+            raise HTTPException(status, detail)
         if "取消" in body["query"]:
             await asyncio.sleep(3)
         conflict = "冲突" in body["query"]

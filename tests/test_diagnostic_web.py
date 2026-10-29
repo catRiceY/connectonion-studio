@@ -56,6 +56,57 @@ def test_invalid_or_failed_worker_withheld(code):
     assert_reaped(children, req)
 
 
+@pytest.mark.parametrize("category,expected", list(web.PROVIDER_FAILURES.items()))
+def test_known_provider_failure_is_actionable_and_worker_reaped(category, expected):
+    children, req = [], request()
+    script = "import sys; print(" + repr(json.dumps({"error": category})) + "); sys.exit(1)"
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(web.run(req, BODY, spawn=spawned(script, children)))
+    assert (failure.value.status_code, failure.value.detail) == expected
+    assert_reaped(children, req)
+
+
+@pytest.mark.parametrize("payload", [
+    {"error": "unknown-secret-provider-body"},
+    {"error": "insufficient_credits", "message": "private-key-must-not-leak"},
+    {"error": ["insufficient_credits"]},
+    {"status": "hypotheses", "hypotheses": []},
+])
+def test_failed_worker_unknown_or_extra_fields_never_leak(payload):
+    children, req = [], request()
+    script = "import sys; print(" + repr(json.dumps(payload)) + "); sys.exit(1)"
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(web.run(req, BODY, spawn=spawned(script, children)))
+    assert failure.value.status_code == 502
+    assert "private-key" not in failure.value.detail
+    assert "secret-provider" not in failure.value.detail
+    assert_reaped(children, req)
+
+
+def test_success_exit_cannot_spoof_provider_error():
+    children, req = [], request()
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(web.run(req, BODY, spawn=spawned('print(\'{"error":"insufficient_credits"}\')', children)))
+    assert failure.value.status_code == 502
+    assert_reaped(children, req)
+
+
+@pytest.mark.parametrize("kind,category", list(web._ERROR_CATEGORIES.items()))
+def test_failure_envelope_keeps_only_allowlisted_category(kind, category):
+    error = type(kind, (Exception,), {})("private credential / raw provider response")
+    assert web._failure_envelope(error) == {"error": category}
+    wrapped = RuntimeError("private user input")
+    wrapped.provider_error_type = kind
+    assert web._failure_envelope(wrapped) == {"error": category}
+
+
+def test_failure_envelope_does_not_guess_from_message():
+    assert web._failure_envelope(ValueError("InsufficientCreditsError: private data")) is None
+    error = RuntimeError("private data")
+    error.provider_error_type = {"error": "InsufficientCreditsError"}
+    assert web._failure_envelope(error) is None
+
+
 def test_bounded_output_kills_actual_worker(monkeypatch):
     monkeypatch.setattr(web, "MAX_RESULT_BYTES", 100)
     children, req = [], request()

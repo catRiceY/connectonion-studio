@@ -34,6 +34,52 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
 
 ## Bundle current source or a published package
 
+### Isolated local preview (recommended for acceptance testing)
+
+On Apple Silicon macOS, with Xcode, `uv`, and Python 3.12+ installed:
+
+```bash
+.venv/bin/python macos/scripts/build_preview.py
+```
+
+This creates a fresh `macos/dist/previews/preview-<timestamp>-<id>/` directory,
+verifies the pinned official standalone Python archive SHA-256, installs the
+checkout with locked runtime extras, builds the native shell, and produces
+`ConnectOnion Studio Preview.app` with an **ad-hoc** signature. It does not read
+Apple signing credentials, notarize, publish, create a DMG, replace an installed
+app, or alter the production appcast. It refuses to overwrite an existing preview.
+The Python interpreter and current source are included; `preview-provenance.json`
+records their hashes and the native build inputs.
+
+Preview builds have a unique bundle identifier and isolated state under
+`~/Library/Application Support/ConnectOnionStudioPreviews/<bundle-id>/`. They
+pass explicit `STUDIO_DATA_DIR` and `AGENT_CONFIG_PATH`, disable automatic
+authentication and Sparkle updates, and do not inherit model credentials or
+database configuration. The user's home is unchanged. The backend chooses a
+free loopback port; existing Studio/Agent ports and data are not reused. WebKit
+uses a non-persistent data store. Server logs are under
+`~/Library/Caches/ConnectOnionStudioPreviews/<bundle-id>/server.log`.
+
+The preview is **self-contained for the Studio/Python application**, not a
+bundled PostgreSQL service or embedding-model download. Database-backed features
+require a separately configured PostgreSQL/pgvector service; missing configuration
+must show an unavailable state, not silently use the user's production database.
+Successful packaging is not GUI acceptance: open the new app, verify readiness,
+empty isolated data, and quit/relaunch behavior before marking that step complete.
+
+Downloads and compilation can be separated without discarding the runtime:
+
+```bash
+.venv/bin/python macos/scripts/build_preview.py --prepare-only
+.venv/bin/python macos/scripts/build_preview.py --resume macos/dist/previews/<printed-id>
+```
+
+`--package-cache <path>` may reuse an Xcode Swift package cache while still
+requiring the checked-in `Package.resolved`. Network proxies, when necessary,
+should be supplied per command rather than changing global Git configuration.
+
+### Existing Developer ID packaging scripts
+
 `scripts/build_local.sh` requires an existing standalone CPython under
 `macos/dist/python` (not a symlink to a developer's environment). It now installs
 the current checkout's wheel plus **history, MCP and knowledge** extras, using

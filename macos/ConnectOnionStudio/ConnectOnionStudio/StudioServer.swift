@@ -47,6 +47,18 @@ final class StudioServer: ObservableObject {
     private static let startupTimeout: TimeInterval = 30   // port-file + readiness, total
     private static let quitGrace: TimeInterval = 0.5       // brief SIGTERM window on quit, then SIGKILL
 
+    static var isPreview: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "COStudioIsolatedPreview") as? Bool == true
+    }
+
+    /// Preview apps never inherit the normal Agent directory, credentials or database URLs.
+    private static var previewDataURL: URL {
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        return support.appendingPathComponent("ConnectOnionStudioPreviews")
+            .appendingPathComponent(Bundle.main.bundleIdentifier ?? "isolated-preview")
+    }
+
     private init() {}
 
     // MARK: - Lifecycle
@@ -124,6 +136,26 @@ final class StudioServer: ObservableObject {
         let proc = Process()
         proc.executableURL = executable
         proc.arguments = arguments
+        if Self.isPreview {
+            let directory = Self.previewDataURL
+            do {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                phase = .failed("Couldn't create isolated preview data directory.")
+                return
+            }
+            // Preserve the user's real home; use explicit application paths instead of spoofing HOME.
+            let allowed = Set(["HOME", "USER", "LOGNAME", "TMPDIR", "LANG", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"])
+            var environment = ProcessInfo.processInfo.environment.filter { allowed.contains($0.key) }
+            environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+            environment["STUDIO_DATA_DIR"] = directory.appendingPathComponent("studio").path
+            environment["AGENT_CONFIG_PATH"] = directory.appendingPathComponent("agent-config").path
+            environment["STUDIO_AUTO_AUTH"] = "0"
+            environment["PYTHONNOUSERSITE"] = "1"
+            proc.environment = environment
+            proc.currentDirectoryURL = directory
+            appendLog("Isolated preview data: \(directory.path)\n")
+        }
         if let handle = logHandle {
             proc.standardOutput = handle
             proc.standardError = handle
@@ -293,6 +325,9 @@ final class StudioServer: ObservableObject {
     nonisolated private static func makeLogFileURL() -> URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        return base.appendingPathComponent("ConnectOnionStudio/server.log")
+        let folder = Bundle.main.object(forInfoDictionaryKey: "COStudioIsolatedPreview") as? Bool == true
+            ? "ConnectOnionStudioPreviews/\(Bundle.main.bundleIdentifier ?? "isolated-preview")"
+            : "ConnectOnionStudio"
+        return base.appendingPathComponent(folder).appendingPathComponent("server.log")
     }
 }
