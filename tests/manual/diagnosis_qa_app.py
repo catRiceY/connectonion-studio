@@ -36,6 +36,8 @@ def build_fixture():
     hit = {"chunk_id": "a" * 64, "doc_id": "b" * 64, "title": "Synthetic reconnect guide",
            "source_uri": "studio://qa/reconnect", "version": "qa-v1", "line_start": 1, "line_end": 3,
            "content": "Reconnect with the saved session ID. Restoring the UI alone does not restore server state.", "chunk_count": 1}
+    other = {**hit, "chunk_id": "c" * 64, "doc_id": "d" * 64, "title": "Synthetic client-specific guide",
+             "source_uri": "studio://qa/client-specific", "content": "This client reconnects automatically. Check the client version before choosing either behavior."}
     class Store:
         def status(self):
             return {"configured": True, "ready": True, "embedding_model": "synthetic-no-embedding"}
@@ -43,6 +45,10 @@ def build_fixture():
             return {"items": [hit], "total": 1, "next_offset": None}
         def search(self, **kwargs):
             return {"hits": [hit]}
+        def search_context(self, query, **kwargs):
+            return {"hits": [hit, other] if "冲突" in query else [hit]}
+        def validate_citations(self, *args):
+            return {"valid": True}
         def diagnose(self, **kwargs):
             return {"status": "evidence", "evidence": [hit], "findings": [], "next_steps": []}
     knowledge.configured_store = Store
@@ -53,14 +59,27 @@ def build_fixture():
             raise HTTPException(status, detail)
         if "取消" in body["query"]:
             await asyncio.sleep(3)
-        conflict = "冲突" in body["query"]
-        return {"status": "conflicting_evidence" if conflict else "hypotheses", "model_called": True,
-                "model": "synthetic-qa-no-model-call", "usage": None,
-                "hypotheses": [] if conflict else [{"possible_cause": "【模拟】重连时可能没有携带原会话 ID。",
-                    "evidence": [{"chunk_id": hit["chunk_id"], "quote": "Reconnect with the saved session ID."}],
-                    "verification_step": "核对客户端保存的 session_id 与重连请求是否一致，只读检查。"}],
-                "limitation": "【隔离 UI 测试】固定模拟回答，不代表真实模型质量；未调用模型、未发送资料。",
-                "evidence": [hit]}
+        from co_studio.diagnostic import generate
+        import json
+        def fixture_complete(text, **kwargs):
+            units = json.loads(text)["untrusted_evidence"]
+            result = {"status": "hypotheses", "claims": [], "limitations": [], "verification_steps": [], "questions": []}
+            if "澄清" in body["query"]:
+                return {**result, "status": "needs_clarification", "questions": ["请提供具体错误信息、客户端和版本。", "请描述复现步骤，以及期望看到的结果。"]}
+            if "越权" in body["query"]:
+                return {**result, "status": "refused"}
+            if "无证据" in body["query"]:
+                return {**result, "status": "insufficient_evidence"}
+            if "冲突" in body["query"]:
+                return {**result, "status": "conflicting_evidence", "claims": [
+                    {"text": "【模拟】重连指南要求使用原 session ID。", "evidence_ids": [units[0]["evidence_id"]]},
+                    {"text": "【模拟】另一份客户端指南说明支持自动重连；需要核对客户端版本。", "evidence_ids": [units[1]["evidence_id"]]}]}
+            if "资料" in body["query"]:
+                return {**result, "status": "answered", "claims": [{"text": "【模拟】使用已保存的会话 ID 重连。恢复界面本身不等于恢复服务端状态。", "evidence_ids": [units[0]["evidence_id"]]}]}
+            return {**result, "claims": [{"text": "【模拟】重连时可能没有携带原会话 ID。", "evidence_ids": [units[0]["evidence_id"]]}],
+                    "verification_steps": [{"kind": "inspect_session_identifier", "evidence_ids": [units[0]["evidence_id"]]}]}
+        return generate(Store(), body["query"], model=body["model"], collection=body["collection"],
+                        max_output_tokens=body["max_output_tokens"], complete=fixture_complete)
     diagnostic_web.run = synthetic
     app = create_app()
     @app.middleware("http")

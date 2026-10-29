@@ -38,6 +38,7 @@ def draft():
 def run(tmp_path, *, store=None, complete=None, case_ids=None):
     destination = tmp_path / "run"
     aggregate = run_trials(destination, model="test-only", max_calls=16,
+                           protocol_version="diagnostic-v1",
                            allow_model_calls=True, _test_store=store or Store(),
                            _test_complete=complete or (lambda *a, **kw: draft()),
                            case_ids=case_ids or ["prompt-zh"])
@@ -69,10 +70,10 @@ def write_review(tmp_path, review):
 
 def test_plan_groups_and_shared_translations():
     plan = make_plan()
-    assert plan["max_dispatches"] == plan["independent_groups"] == 8
+    assert plan["max_dispatches"] == 16 and plan["independent_groups"] == 8
     both = make_plan(case_ids=["prompt-zh", "prompt-en"])
     assert both["max_dispatches"] == 2 and both["independent_groups"] == 1
-    assert make_plan(split="dev")["max_dispatches"] == 3
+    assert make_plan(split="dev")["max_dispatches"] == 6
     assert "fixed regression" in plan["holdout_policy"]
 
 
@@ -309,7 +310,7 @@ def test_live_wrapper_captures_real_interface_usage_and_clears_previous_case(tmp
     def structured(messages, schema, **kwargs):
         assert provider.last_structured_usage is None
         assert [item["role"] for item in messages] == ["system", "user"]
-        assert kwargs == {"max_tokens": 2048}
+        assert kwargs == {"max_tokens": 4096}
         calls.append(messages)
         if len(calls) == 1:
             provider.last_structured_usage = {"input_tokens": 12, "output_tokens": 7}
@@ -321,6 +322,7 @@ def test_live_wrapper_captures_real_interface_usage_and_clears_previous_case(tmp
     monkeypatch.setattr(module, "corpus_manifest", lambda store: {"same": True})
     output = tmp_path / "provider-interface"
     result = run_trials(output, model="offline-monkeypatched-provider", max_calls=2,
+                        protocol_version="diagnostic-v1",
                         allow_model_calls=True, case_ids=["prompt-zh", "prompt-en"])
     assert len(calls) == 2
     assert result["metrics"]["provider_usage"]["input_tokens"] == {
@@ -418,12 +420,13 @@ def test_explicit_output_budget_frozen_in_manifest_and_forwarded_once(tmp_path):
     completion = Mock(return_value=draft())
     destination = tmp_path / "larger-budget"
     run_trials(destination, model="test-only", max_calls=1, allow_model_calls=True,
+               protocol_version="diagnostic-v1",
                case_ids=["prompt-zh"], max_output_tokens=4096,
                _test_store=Store(), _test_complete=completion)
     assert completion.call_count == 1
     assert completion.call_args.kwargs["max_tokens"] == 4096
     assert read(destination / "manifest.json")["max_output_tokens_requested"] == 4096
-    assert make_plan()["max_output_tokens_requested"] == 2048
+    assert make_plan()["max_output_tokens_requested"] == 4096
 
 
 @pytest.mark.parametrize("budget", [255, 8193, True, 2048.0, "2048", None])

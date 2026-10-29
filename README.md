@@ -274,8 +274,18 @@ with source/version/hash metadata and exact-quote validation. BM25-only remains
 available for comparison. The default UI diagnosis extracts evidence; it does
 not prove a root cause. The separate Chinese diagnosis action requires a model
 ID and explicit consent to send the question/evidence to that provider and incur
-charges. It returns schema-validated hypotheses and citations without executing
-suggested actions. Generation has bounded workers, a deadline and cancellation;
+charges. Versioned `diagnostic-v2` distinguishes factual answers, hypotheses,
+clarification, conflict, insufficient evidence and refusal. The model selects
+evidence IDs; the server supplies exact original quotes and checks source currency.
+Factual limitations and suggested verification steps also require citations.
+Verification steps use a fixed `readonly-checks-v1` allowlist: the model selects
+a check kind and evidence IDs, while the server supplies the manual-check wording.
+No free-form command is accepted in that channel; this is not a guarantee that
+all free-text claims are semantically safe or correct.
+It does not execute suggested actions. Web and CLI share a **4,096-token output
+default**; the web confirmation explicitly offers 2,048/4,096 and changing the
+selection resets consent. Caps are not fee ceilings; budgets never automatically
+increase after a failure. Generation has bounded workers, a deadline and cancellation;
 local cancellation cannot reverse provider charges. The explicit
 `co_studio.diagnostic --model ... --allow-model-call` CLI is also available.
 Quote validity is not semantic entailment. The first small real-model evaluation
@@ -283,8 +293,12 @@ found generation failures; it is not a passed quality acceptance (see below).
 
 Chinese technical queries keep their original text and may add a small, auditable
 English glossary query under the same candidate budget. This is not a general
-translator or multilingual embedding model. Adjacent-chunk expansion is a
-default-off experiment, not the production retrieval default.
+translator or multilingual embedding model. Ordinary Search preserves its ranked
+hits. Generated answers use a separate bounded context-assembly policy: primary
+hits remain intact while same-version adjacent passages and additional document
+context can supplement them. The earlier rank-replacing adjacent experiment stays
+separate; context assembly does not guarantee full evidence or conflict coverage.
+Supplemental passages are not counted as ranked Recall@5 hits in evaluations.
 
 With History and Knowledge configured, a bounded worker indexes completed turns
 and whitelisted Agent configuration into separate Agent collections. The source

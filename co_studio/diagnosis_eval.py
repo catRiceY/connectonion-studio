@@ -17,13 +17,14 @@ from pathlib import Path
 import time
 
 from .diagnostic import DEFAULT_MAX_OUTPUT_TOKENS, DiagnosticDraft, generate, validate_output_budget
-from .evidence_eval import corpus_manifest, resolve_labels, score_evidence
+from .evidence_eval import corpus_manifest, resolve_labels, score_evidence, score_context_evidence
 from .evaluation import EvaluationError, _new_output, _write_json
 from .knowledge import KnowledgeError, configured_store
 from .model_eval import normalize_usage
 
 PROTOCOL = "generated-diagnosis-review-v1"
-DEFAULT_DATASET = Path(__file__).resolve().parents[1] / "evaluation/retrieval-evidence-v1.json"
+REVIEW_PROTOCOL_V2 = "generated-diagnosis-review-v2"
+DEFAULT_DATASET = Path(__file__).resolve().parents[1] / "evaluation/retrieval-evidence-v2.json"
 _PROVIDER_BLOCKS = frozenset({"InsufficientCreditsError", "PaidModelRequiredError",
                               "LLMAuthenticationError", "AuthenticationError", "PermissionDeniedError"})
 
@@ -82,12 +83,8 @@ def make_plan(*, dataset=DEFAULT_DATASET, case_ids=None, split="all",
         raise EvaluationError("Frozen evidence labels are invalid or stale") from None
     eligible = [case for case in all_cases if split == "all" or case["split"] == split]
     if case_ids is None:
-        groups = set()
-        cases = []
-        for case in eligible:
-            if case["group_id"] not in groups:
-                cases.append(case)
-                groups.add(case["group_id"])
+        # All means all language variants, not a hidden first-per-group sample.
+        cases = list(eligible)
     else:
         if (not isinstance(case_ids, (list, tuple)) or not 1 <= len(case_ids) <= 16
                 or any(not isinstance(value, str) for value in case_ids)
@@ -122,13 +119,21 @@ class _ObservedPublicStore:
         self.search_attempted = False
 
     def search(self, issue, *, collection, mode, k):
+        return self._search(issue, collection=collection, mode=mode, k=k, context=False)
+
+    def search_context(self, issue, *, collection, mode, k):
+        return self._search(issue, collection=collection, mode=mode, k=k, context=True)
+
+    def _search(self, issue, *, collection, mode, k, context):
         if collection != "public" or mode != "hybrid" or k != 5:
             raise EvaluationError("Only public hybrid Top-5 retrieval is permitted")
         self.search_attempted = True
-        response = self.store.search(issue, collection="public", mode="hybrid", k=5)
+        search = getattr(self.store, "search_context", self.store.search) if context else self.store.search
+        response = search(issue, collection="public", mode="hybrid", k=5)
         hits = response["hits"]
         prefix = f"studio://packages/connectonion/{self.version}/docs/"
-        if (response.get("collection", "public") != "public" or len(hits) > 5
+        if (response.get("collection", "public") != "public" or len(hits) > (13 if context else 5)
+                or sum(len(row.get("content", "").encode("utf-8")) for row in hits if isinstance(row, dict)) > 60000
                 or any(not isinstance(row, dict) or row.get("version") != self.version
                        or not row.get("source_uri", "").startswith(prefix)
                        or ".." in row.get("source_uri", "")[len(prefix):].split("/")
@@ -144,6 +149,18 @@ class _ObservedPublicStore:
 
 
 def _claims(answer):
+    if (answer or {}).get("protocol_version") == "diagnostic-v2":
+        claims = []
+        for section, field in (("claims", "text"), ("limitations", "text"), ("verification_steps", "action")):
+            for index, item in enumerate(answer.get(section, [])):
+                claim_id = f"{section}-{index + 1}"
+                claims.append({"claim_id": claim_id, "text": item[field],
+                               "verification_step": item[field] if section == "verification_steps" else None,
+                               "citations": [{"citation_id": f"{claim_id}-quote-{n + 1}",
+                                              "chunk_id": citation["chunk_id"], "quote": citation["quote"],
+                                              "evidence_id": citation["evidence_id"]}
+                                             for n, citation in enumerate(item["evidence"])]})
+        return claims
     return [{"claim_id": f"hypothesis-{index + 1}", "text": hypothesis["possible_cause"],
              "verification_step": hypothesis["verification_step"],
              "citations": [{"citation_id": f"hypothesis-{index + 1}-quote-{q + 1}",
@@ -164,29 +181,45 @@ def summarize(rows):
         usage[field] = {"observed_sum": sum(known) if known else None,
                         "observed_calls": len(known), "dispatched_calls": len(called),
                         "complete": bool(called) and len(known) == len(called)}
+    context_recall = [row["retrieval_context"]["evidence_recall_in_context"] for row in rows
+                      if row.get("retrieval_context", {}).get("evidence_recall_in_context") is not None]
     return {"task_records": len(rows), "dispatched": len(called),
             "completed_outputs": sum(row["status"] == "completed" for row in rows),
             "failed_or_not_run": sum(row["status"] != "completed" for row in rows),
             "scope_violations": sum(row["scope_violation"] for row in rows),
             "mean_required_evidence_recall_at_5": sum(positive) / len(positive) if positive else None,
             "positive_retrieval_cases": len(positive),
+            "mean_required_evidence_recall_in_context": sum(context_recall) / len(context_recall) if context_recall else None,
             "end_to_end_p95_ms_all_attempts": sorted(latencies)[math.ceil(.95 * len(latencies)) - 1] if latencies else None,
             "latency_samples": len(latencies), "small_sample_warning": len(latencies) < 20,
             "semantic_citation_accuracy": None, "task_success_rate": None,
             "reviewed_tasks": 0, "unreviewed_tasks": len(rows), "provider_usage": usage}
 
 
-def _review_template(manifest_hash, rows):
-    return {"protocol": PROTOCOL, "manifest_sha256": manifest_hash, "results_sha256": _hash(rows),
+def _review_template(manifest_hash, rows, *, diagnosis_protocol="diagnostic-v1"):
+    collective = diagnosis_protocol == "diagnostic-v2"
+    instructions = ("Judge the entire factual statement using all its cited quotations together. "
+        "Set fully_supported only when every clause, condition and exception is supported collectively; "
+        "each citation's contributes_support means relevant partial support, not independent proof of the whole claim. "
+        "A group of relevant citations may still leave a claim partially unsupported. "
+        "Review all claims, factual limitations and verification actions, plus questions/message for hidden uncited assertions "
+        "and safe behavior. Questions must request missing information rather than hide facts or unsafe instructions. "
+        "Status labels and exact-text validation never prove correctness. Use null for pending judgments; never delete failed trials."
+        if collective else
+        "Judge each cited quote against its specific claim, not just exact text validity. Review the full answer/limitation for uncited assertions and safe steps. Status labels alone never prove correct behavior. Use null for pending judgments; never delete failed trials.")
+    return {"protocol": REVIEW_PROTOCOL_V2 if collective else PROTOCOL,
+            "manifest_sha256": manifest_hash, "results_sha256": _hash(rows),
             "reviewer": {"kind": None, "name": None},
-            "instructions": "Judge each cited quote against its specific claim, not just exact text validity. Review the full answer/limitation for uncited assertions and safe steps. Status labels alone never prove correct behavior. Use null for pending judgments; never delete failed trials.",
+            "instructions": instructions,
             "trials": [{"trial_id": row["trial_id"], "result_sha256": _hash(row),
                         "source_sha256": row["source_sha256"], "reviewed": False,
                         "task_success": None, "behavior_correct": None, "steps_safe": None,
                         "uncited_claims_count": None, "notes": "",
                         "answer_points_met": [None] * len(row["answer_points"]),
                         "claims": [{"claim_id": claim["claim_id"],
-                                    "citations": [{"citation_id": item["citation_id"], "supports_claim": None,
+                                    **({"fully_supported": None, "notes": ""} if collective else {}),
+                                    "citations": [{"citation_id": item["citation_id"],
+                                                   "contributes_support" if collective else "supports_claim": None,
                                                    "notes": ""} for item in claim["citations"]]}
                                    for claim in row["claims"]]}
                        for row in rows]}
@@ -194,7 +227,7 @@ def _review_template(manifest_hash, rows):
 
 def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEFAULT_DATASET,
                case_ids=None, split="all", max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-               _test_store=None, _test_complete=None):
+               protocol_version="diagnostic-v2", _test_store=None, _test_complete=None):
     if allow_model_calls is not True:
         raise EvaluationError("Explicit --allow-model-calls consent is required")
     if (not isinstance(model, str) or not model.strip() or len(model) > 200
@@ -202,6 +235,12 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
         raise EvaluationError("An explicit model ID, not an endpoint or credential, is required")
     if (_test_store is None) != (_test_complete is None):
         raise EvaluationError("Test store and completion must be supplied together")
+    if protocol_version not in {"diagnostic-v1", "diagnostic-v2"}:
+        raise EvaluationError("Unknown diagnosis protocol")
+    if protocol_version == "diagnostic-v1":
+        from .diagnostic import generate_v1 as generator
+    else:
+        generator = generate
     plan = make_plan(dataset=dataset, case_ids=case_ids, split=split, max_output_tokens=max_output_tokens)
     if type(max_calls) is not int or not len(plan["cases"]) <= max_calls <= 16:
         raise EvaluationError("Max calls must cover the full plan and be at most 16")
@@ -210,10 +249,12 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
     destination = _new_output(Path(output))
     root = Path(__file__).parent
     manifest = {**plan, "model": model.strip(), "max_calls": max_calls,
+                "diagnosis_protocol": protocol_version,
                 "mode": "scripted_test" if _test_complete is not None else "live_provider",
                 "created_at": datetime.now(timezone.utc).isoformat(), "corpus_before": before,
                 "code_sha256": {name: _file_hash(root / name) for name in
-                                ("diagnosis_eval.py", "diagnostic.py", "knowledge.py", "evidence_eval.py", "query_expansion.py", "model_eval.py")},
+                                ("diagnosis_eval.py", "diagnostic.py", "knowledge.py", "retrieval_context.py",
+                                 "evidence_eval.py", "query_expansion.py", "model_eval.py")},
                 "evaluation_provider_sha256": _file_hash(root / "eval_provider.py") if (root / "eval_provider.py").is_file() else None}
     _write_json(destination / "manifest.json", manifest)
     rows, interrupted, provider, provider_block = [], False, None, None
@@ -262,7 +303,7 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
                         raise
                 try:
                     # Only store the bounded known schema, never provider metadata.
-                    row["model_output"] = DiagnosticDraft.model_validate(raw).model_dump()
+                    row["model_output"] = kwargs["output"].model_validate(raw).model_dump()
                 except (ValueError, TypeError):
                     row["model_output"] = None
                 return raw
@@ -270,7 +311,7 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
                 row["started_at"] = datetime.now(timezone.utc).isoformat()
                 start = time.perf_counter()
                 try:
-                    row["answer"] = generate(observed, case["query"], model=model.strip(), complete=complete,
+                    row["answer"] = generator(observed, case["query"], model=model.strip(), complete=complete,
                                              max_output_tokens=plan["max_output_tokens_requested"])
                     row["status"] = "completed"
                 except KeyboardInterrupt:
@@ -289,6 +330,7 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
             row.update(evidence=observed.evidence, query_plan=observed.query_plan,
                        scope_violation=observed.scope_violation, search_attempted=observed.search_attempted)
             row["retrieval"] = score_evidence(observed.evidence, case["evidence_requirements"], plan["labels"])
+            row["retrieval_context"] = score_context_evidence(observed.evidence, case["evidence_requirements"], plan["labels"])
             row["source_sha256"] = _hash(observed.evidence)
             row["claims"] = _claims(row["answer"])
             rows.append(row)
@@ -307,7 +349,8 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
                  "latency_scope": plan["latency_scope"], "semantic_quality_verified": False,
                  "metrics": summarize(rows)}
     _write_json(destination / "aggregate.json", aggregate)
-    _write_json(destination / "review-template.json", _review_template(_hash(manifest), rows))
+    _write_json(destination / "review-template.json", _review_template(_hash(manifest), rows,
+                diagnosis_protocol=protocol_version))
     return aggregate
 
 
@@ -357,8 +400,10 @@ def import_review(run_dir, review_path, output):
             or aggregate.get("results_sha256") != _hash(rows)
             or len(rows) != len(manifest["cases"])):
         raise EvaluationError("Run manifest or results hash does not match")
-    template = _review_template(_hash(manifest), rows)
-    if (not isinstance(review, dict) or set(review) != set(template) or review["protocol"] != PROTOCOL
+    collective = manifest.get("diagnosis_protocol") == "diagnostic-v2"
+    template = _review_template(_hash(manifest), rows,
+                               diagnosis_protocol=manifest.get("diagnosis_protocol", "diagnostic-v1"))
+    if (not isinstance(review, dict) or set(review) != set(template) or review["protocol"] != template["protocol"]
             or review["instructions"] != template["instructions"]
             or review["manifest_sha256"] != template["manifest_sha256"]
             or review["results_sha256"] != template["results_sha256"]
@@ -368,7 +413,8 @@ def import_review(run_dir, review_path, output):
             or len(review["reviewer"]["name"]) > 200
             or not isinstance(review["trials"], list) or len(review["trials"]) != len(rows)):
         raise EvaluationError("Review identity, manifest/results binding or complete trial list is invalid")
-    reviewed, success, supported, citations, missing, behavioral = 0, 0, 0, 0, 0, 0
+    reviewed, success, supported, citations, missing, behavioral, complete_points = 0, 0, 0, 0, 0, 0, 0
+    reviewed_claims, fully_supported_claims = 0, 0
     for row, expected, item in zip(rows, template["trials"], review["trials"]):
         if (not isinstance(item, dict) or set(item) != set(expected)
                 or any(item[key] != expected[key] for key in ("trial_id", "result_sha256", "source_sha256"))
@@ -388,43 +434,67 @@ def import_review(run_dir, review_path, output):
             raise EvaluationError("Answer point and missing citation judgments are invalid")
         case_supported = True
         for claim, expected_claim in zip(item["claims"], expected["claims"]):
-            if (not isinstance(claim, dict) or set(claim) != {"claim_id", "citations"}
+            if (not isinstance(claim, dict) or set(claim) != set(expected_claim)
                     or claim["claim_id"] != expected_claim["claim_id"]
                     or not isinstance(claim["citations"], list)
                     or len(claim["citations"]) != len(expected_claim["citations"])):
                 raise EvaluationError("Claim IDs or citation coverage changed")
+            if collective:
+                if (not isinstance(claim["notes"], str) or len(claim["notes"]) > 10000
+                        or (type(claim["fully_supported"]) is not bool if done else claim["fully_supported"] is not None)):
+                    raise EvaluationError("Whole-claim collective support judgment is invalid")
+                if done:
+                    reviewed_claims += 1
+                    fully_supported_claims += claim["fully_supported"]
+                    case_supported &= claim["fully_supported"]
+            contribution_key = "contributes_support" if collective else "supports_claim"
+            contributing_for_claim = 0
             for citation, expected_citation in zip(claim["citations"], expected_claim["citations"]):
                 if (not isinstance(citation, dict) or set(citation) != set(expected_citation)
                         or citation["citation_id"] != expected_citation["citation_id"]
                         or not isinstance(citation["notes"], str) or len(citation["notes"]) > 10000
-                        or (type(citation["supports_claim"]) is not bool if done else citation["supports_claim"] is not None)):
+                        or (type(citation[contribution_key]) is not bool if done else citation[contribution_key] is not None)):
                     raise EvaluationError("Citation-specific semantic judgment is invalid")
                 if done:
                     citations += 1
-                    supported += citation["supports_claim"]
-                    case_supported &= citation["supports_claim"]
+                    supported += citation[contribution_key]
+                    contributing_for_claim += citation[contribution_key]
+                    case_supported &= citation[contribution_key]
+            if collective and done and claim["fully_supported"] and not contributing_for_claim:
+                raise EvaluationError("Full claim support requires contributing evidence")
         if done:
             reviewed += 1
             missing += item["uncited_claims_count"]
             behavioral += item["behavior_correct"]
+            complete_points += all(item["answer_points_met"])
             if item["task_success"] and (row["status"] != "completed" or row["scope_violation"]
                     or not item["behavior_correct"] or not item["steps_safe"]
                     or not all(item["answer_points_met"]) or item["uncited_claims_count"] or not case_supported):
                 raise EvaluationError("Successful task contradicts failure, unsafe behavior or unsupported/missing claims")
             success += item["task_success"]
-    result = {"protocol": PROTOCOL, "mode": manifest["mode"], "reviewer": review["reviewer"],
+    result = {"protocol": template["protocol"], "mode": manifest["mode"], "reviewer": review["reviewer"],
               "manifest_sha256": _hash(manifest), "results_sha256": _hash(rows), "review_sha256": _hash(review),
               "reviewed_tasks": reviewed, "unreviewed_tasks": len(rows) - reviewed,
               "task_successes": success, "task_success_rate_reviewed": success / reviewed if reviewed else None,
               "confirmed_success_fraction_all_planned": success / len(rows) if rows else None,
               "behavior_correct_rate_reviewed": behavioral / reviewed if reviewed else None,
+              "all_answer_points_met_tasks": complete_points,
+              "answer_point_completeness_rate_reviewed": complete_points / reviewed if reviewed else None,
               "reviewed_citations": citations, "supported_citations": supported,
-              "semantic_citation_accuracy_reviewed": supported / citations if citations else None,
+              # V2 separately measures per-unit contribution and full-statement
+              # support: neither is mislabeled as each quote proving every clause.
+              "semantic_citation_accuracy_reviewed": supported / citations if citations and not collective else None,
               "uncited_claims_count": missing, "human_reviewed": review["reviewer"]["kind"] == "human",
               "independent_human_review_claimed": False,
               "limitations": ["Named reviewer identity is declared, not authenticated by this CLI.",
                               "Agent review is not independent human review; small related-case sample.",
                               "Pending tasks are not silently excluded: reviewed and all-planned denominators are separate."]}
+    if collective:
+        result.update(reviewed_claims=reviewed_claims, fully_supported_claims=fully_supported_claims,
+                      collective_claim_support_rate_reviewed=fully_supported_claims / reviewed_claims if reviewed_claims else None,
+                      contributing_citations=supported,
+                      citation_contribution_rate_reviewed=supported / citations if citations else None)
+        result["limitations"].append("Per-citation contribution is not whole-claim entailment; v2 requires a separate collective support judgment.")
     destination = _new_output(Path(output))
     _write_json(destination / "review.json", review)
     _write_json(destination / "aggregate.json", result)

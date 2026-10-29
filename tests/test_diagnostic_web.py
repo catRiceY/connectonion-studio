@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from co_studio import diagnostic_web as web
 from co_studio.api import knowledge as api
 from co_studio.app import create_app
+from co_studio.diagnostic import DEFAULT_MAX_OUTPUT_TOKENS
 
 BODY = {"query": "为什么无法连接？", "model": "co/test-model", "collection": "public", "mode": "hybrid"}
 RESULT = {"status": "insufficient_evidence", "model_called": False, "hypotheses": [], "evidence": []}
@@ -190,11 +191,11 @@ def test_api_requires_explicit_boolean_consent_before_dispatch(client):
     worker.assert_not_called()
     response = client.post("/api/knowledge/generate", json={**BODY, "allow_model_call": True})
     assert response.status_code == 200
-    assert worker.call_args.args[1] == BODY
+    assert worker.call_args.args[1] == {**BODY, "max_output_tokens": DEFAULT_MAX_OUTPUT_TOKENS}
     assert response.headers["cache-control"] == "no-store"
 
 
-@pytest.mark.parametrize("extra", [{"model": ""}, {"model": " bad "}, {"query": " "}, {"base_url": "https://evil.invalid"}, {"k": 20}, {"model": "a" * 129}, {"collection": "../secret"}])
+@pytest.mark.parametrize("extra", [{"model": ""}, {"model": " bad "}, {"query": " "}, {"base_url": "https://evil.invalid"}, {"k": 20}, {"model": "a" * 129}, {"collection": "../secret"}, {"max_output_tokens": 255}, {"max_output_tokens": 8193}, {"max_output_tokens": "4096"}, {"max_output_tokens": True}, {"max_output_tokens": 4096.0}])
 def test_api_invalid_requests_never_dispatch(client, extra):
     client, worker = client
     assert client.post("/api/knowledge/generate", json={**BODY, "allow_model_call": True, **extra}).status_code == 422
@@ -230,3 +231,130 @@ def test_spawn_failure_still_restores_capacity():
     with pytest.raises(OSError):
         asyncio.run(web.run(req, BODY, spawn=launch))
     assert req.app.state.diagnosis_active == 0
+
+
+@pytest.mark.parametrize("budget", [256, 2048, 4096, 8192])
+def test_api_preserves_explicit_budget_without_automatic_increase(client, budget):
+    local, worker = client
+    response = local.post("/api/knowledge/generate", json={
+        **BODY, "allow_model_call": True, "max_output_tokens": budget})
+    assert response.status_code == 200
+    assert worker.call_count == 1
+    assert worker.call_args.args[1]["max_output_tokens"] == budget
+
+
+def test_validation_envelope_never_echoes_raw_fields_or_provider_input():
+    failure = RuntimeError("private-key")
+    failure.failure_phase = "schema_validation"
+    failure.validation_errors = [
+        {"type": "literal_error", "loc": ["status"]},
+        {"type": "private-token", "loc": ["secret-user-query", -1, {"private": "key"}]},
+        {"type": "missing", "loc": ["hypotheses"], "input": "private-source"},
+    ]
+    result = web._failure_envelope(failure)
+    assert result == {"error": "schema_validation", "issues": [
+        {"type": "literal_error", "loc": ["status"]},
+        {"type": "validation_error", "loc": ["<field>", "<field>", "<field>"]},
+    ]}
+    assert "private" not in json.dumps(result)
+
+
+def test_validation_envelope_transport_only_exposes_safe_issue_summary():
+    children, req = [], request()
+    payload = {"error": "schema_validation", "issues": [
+        {"type": "literal_error", "loc": ["status"]},
+        {"type": "private-provider-response", "loc": ["private-key"]}]}
+    code = "import sys; print(" + repr(json.dumps(payload)) + "); sys.exit(1)"
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(web.run(req, BODY, spawn=spawned(code, children)))
+    assert failure.value.status_code == 502
+    assert "status: literal_error" in failure.value.detail
+    assert "private" not in failure.value.detail
+    assert_reaped(children, req)
+
+
+@pytest.mark.parametrize("budget", [2048, 4096])
+def test_worker_main_forwards_exact_budget_and_calls_once(monkeypatch, budget):
+    import io
+    from co_studio import diagnostic, knowledge
+    from unittest.mock import Mock
+    generate = Mock(return_value=RESULT)
+    monkeypatch.setattr(diagnostic, "generate", generate)
+    monkeypatch.setattr(knowledge, "configured_store", lambda: "isolated-store")
+    output = io.BytesIO()
+    monkeypatch.setattr(sys, "stdin", SimpleNamespace(buffer=io.BytesIO(json.dumps({**BODY, "max_output_tokens": budget}).encode())))
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(buffer=output))
+    assert web.main() == 0
+    generate.assert_called_once_with("isolated-store", BODY["query"], model=BODY["model"],
+                                    collection="public", mode="hybrid", max_output_tokens=budget)
+    assert json.loads(output.getvalue()) == RESULT
+
+
+def result_v2(status="answered"):
+    from co_studio.diagnostic import generate
+    hit = {"chunk_id": "a" * 64, "source_uri": "studio://qa/document", "version": "1",
+           "content": "Reconnect with the saved session ID.", "line_start": 1, "line_end": 1,
+           "collection": "public"}
+    other = {**hit, "chunk_id": "b" * 64, "source_uri": "studio://qa/other",
+             "content": "This client reconnects automatically."}
+    class Store:
+        def search(self, *args, **kwargs):
+            return {"hits": [hit, other] if status == "conflicting_evidence" else [hit]}
+        def validate_citations(self, *args):
+            return {"valid": True}
+    def complete(text, **kwargs):
+        units = json.loads(text)["untrusted_evidence"]
+        return {"status": status,
+                "claims": [{"text": "Documented condition", "evidence_ids": [unit["evidence_id"]]}
+                           for unit in units] if status in {"answered", "hypotheses", "conflicting_evidence"} else [],
+                "limitations": [],
+                "verification_steps": [{"kind": "inspect_session_identifier", "evidence_ids": [units[0]["evidence_id"]]}]
+                                      if status in {"answered", "hypotheses"} else [],
+                "questions": ["Which client and version are affected?"] if status == "needs_clarification" else []}
+    return generate(Store(), "question", model=BODY["model"], complete=complete)
+
+
+@pytest.mark.parametrize("status", ["answered", "hypotheses", "needs_clarification", "refused", "insufficient_evidence", "conflicting_evidence"])
+def test_v2_worker_transport_accepts_all_valid_states_and_exact_server_quotes(status):
+    children, req = [], request()
+    expected = result_v2(status)
+    code = "print(" + repr(json.dumps(expected)) + ")"
+    actual = asyncio.run(web.run(req, BODY, spawn=spawned(code, children)))
+    assert actual == expected
+    assert_reaped(children, req)
+
+
+@pytest.mark.parametrize("change", ["quote", "unit", "scope", "budget", "model", "protocol", "message",
+                                   "missing-field", "action", "kind", "verification-policy", "legacy-v2"])
+def test_v2_worker_transport_withholds_forged_or_mismatched_results(change):
+    children, req = [], request()
+    result = result_v2()
+    if change == "quote":
+        result["claims"][0]["evidence"][0]["quote"] = "invented quote"
+    elif change == "unit":
+        result["claims"][0]["evidence_ids"] = ["ev_" + "f" * 32]
+    elif change == "scope":
+        result["collection"] = "another-agent"
+    elif change == "budget":
+        result["max_output_tokens"] = 2048
+    elif change == "model":
+        result["model"] = "different-paid-model"
+    elif change == "protocol":
+        result["protocol_version"] = "unknown-version"
+    elif change == "message":
+        result["message"] = "provider injected private content"
+    elif change == "action":
+        result["verification_steps"][0]["action"] = "Run co init to verify."
+    elif change == "kind":
+        result["verification_steps"][0]["kind"] = "run_command"
+    elif change == "verification-policy":
+        result["verification_policy"] = "unknown-version"
+    elif change == "legacy-v2":
+        del result["verification_policy"]
+    else:
+        del result["claims"]
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(web.run(req, BODY, spawn=spawned("print(" + repr(json.dumps(result)) + ")", children)))
+    assert failure.value.status_code == 502
+    assert "private" not in failure.value.detail
+    assert_reaped(children, req)

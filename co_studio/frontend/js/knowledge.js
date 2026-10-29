@@ -1,4 +1,5 @@
 import { message, node } from './workspace-ui.js';
+import { isReadOnlyVerificationStep } from './verification-policy.js';
 
 export function createKnowledgeView({ root, api }) {
   const $ = (id) => root.querySelector(`#knowledge-${id}`); const doc = root.ownerDocument;
@@ -15,8 +16,9 @@ export function createKnowledgeView({ root, api }) {
     $('diagnose').disabled = $('search').disabled;
     $('generate').disabled = $('search').disabled;
     $('generation-start').disabled = $('search').disabled || !$('generation-consent').checked
-      || !/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/.test($('generation-model').value.trim());
-    $('generation-model').disabled = busy; $('generation-consent').disabled = busy;
+      || !/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}$/.test($('generation-model').value.trim())
+      || !['2048', '4096'].includes($('generation-budget').value);
+    $('generation-model').disabled = busy; $('generation-budget').disabled = busy; $('generation-consent').disabled = busy;
     $('generation-dismiss').disabled = busy;
     $('generation-cancel').hidden = !generating;
     $('more').disabled = loading || busy; $('retry').disabled = loading;
@@ -133,11 +135,16 @@ export function createKnowledgeView({ root, api }) {
   }
   function renderGenerated(result) {
     $('results').replaceChildren();
-    const titles = { hypotheses: '诊断假设 · 待核实', insufficient_evidence: '证据不足', conflicting_evidence: '证据存在冲突' };
+    const titles = { answered: '资料回答', hypotheses: '诊断假设 · 待核实', needs_clarification: '需要补充信息',
+      insufficient_evidence: '证据不足', conflicting_evidence: '证据存在冲突', refused: '无法执行此请求' };
     $('results').append(node(doc, 'h3', 'history-section-title', titles[result.status] || '未获得有效诊断'));
     $('results').append(node(doc, 'p', 'history-note', result.model_called
       ? `模型：${result.model} · Token / 费用未返回，请以服务商账单为准。` : '未调用模型。'));
     $('results').append(node(doc, 'p', 'history-note', '引用检查仅核对来源版本与原文，不证明诊断正确；验证步骤由你人工判断，不会自动执行。'));
+    if (result.protocol_version === 'diagnostic-v2') {
+      $('results').append(node(doc, 'p', 'history-note', `回答协议：diagnostic-v2 · 本次输出上限：${result.max_output_tokens} Token`));
+      renderGeneratedV2(result); return;
+    }
     const evidence = result.evidence || []; const byId = new Map(evidence.map((hit) => [hit.chunk_id, hit]));
     for (const hypothesis of result.status === 'hypotheses' ? result.hypotheses || [] : []) {
       const grounded = hypothesis.evidence?.length && hypothesis.evidence.every((quote) =>
@@ -150,10 +157,67 @@ export function createKnowledgeView({ root, api }) {
         card.append(node(doc, 'blockquote', 'history-text', quote.quote),
           node(doc, 'p', 'history-note', `${source.title || source.source_uri} · ${source.version} · ${quote.chunk_id.slice(0, 12)}`));
       }
-      card.append(node(doc, 'p', 'history-text', `建议核查（未执行）：${hypothesis.verification_step}`)); $('results').append(card);
+      card.append(node(doc, 'p', 'history-text', `旧版模型建议（未核验只读，未执行）：${hypothesis.verification_step}`)); $('results').append(card);
     }
     $('results').append(node(doc, 'p', 'history-note', result.limitation || '请人工核对原始资料。'));
     for (const hit of evidence) $('results').append(evidenceCard(hit));
+  }
+  function renderGeneratedV2(result) {
+    const evidence = Array.isArray(result.evidence) ? result.evidence : [];
+    const units = new Map((result.evidence_units || []).map((unit) => [unit.evidence_id, unit]));
+    const grounded = (item) => Array.isArray(item.evidence_ids) && item.evidence_ids.length > 0
+      && Array.isArray(item.evidence) && item.evidence.length === item.evidence_ids.length
+      && new Set(item.evidence_ids).size === item.evidence_ids.length
+      && item.evidence.every((quote, index) => {
+        const unit = units.get(item.evidence_ids[index]);
+        return unit && quote.evidence_id === item.evidence_ids[index] && quote.chunk_id === unit.chunk_id
+          && typeof quote.quote === 'string' && quote.quote.trim() && quote.quote === unit.quote
+          && quote.source_uri === unit.source_uri && quote.version === unit.version
+          && quote.content_hash === unit.content_hash && quote.chunk_hash === unit.chunk_hash
+          && quote.line_start === unit.line_start && quote.line_end === unit.line_end;
+      });
+    function citedCard(item, label, text) {
+      if (!grounded(item)) {
+        $('results').append(node(doc, 'p', 'history-note', '有内容未通过引用检查，已隐藏。')); return;
+      }
+      const card = node(doc, 'article', 'history-turn knowledge-hypothesis');
+      if (label) card.append(node(doc, 'h3', '', label));
+      card.append(node(doc, 'p', 'history-text', text));
+      const sources = node(doc, 'details', 'knowledge-claim-sources');
+      sources.append(node(doc, 'summary', '', `查看依据（${item.evidence.length}）`));
+      for (const quote of item.evidence) {
+        sources.append(node(doc, 'blockquote', 'history-text', quote.quote), node(doc, 'p', 'history-note',
+          `${quote.evidence_id} · ${quote.source_uri} · ${quote.version} · ${quote.line_start}–${quote.line_end}`));
+      }
+      card.append(sources); $('results').append(card);
+    }
+    if (result.message) $('results').append(node(doc, 'p', 'history-text', result.message));
+    if (['answered', 'hypotheses', 'conflicting_evidence'].includes(result.status)) {
+      for (const item of result.claims || []) citedCard(item, result.status === 'hypotheses' ? '可能原因（待核实）' : '', item.text);
+    }
+    for (const item of result.limitations || []) citedCard(item, '适用条件与限制', item.text);
+    if (['answered', 'hypotheses', 'conflicting_evidence'].includes(result.status)) {
+      for (const item of result.verification_steps || []) {
+        if (!isReadOnlyVerificationStep(result.verification_policy, item)) {
+          $('results').append(node(doc, 'p', 'history-note', result.verification_policy
+            ? '核查建议未通过只读策略校验，已隐藏。'
+            : '旧版核查建议未经过只读策略校验，已隐藏；请重新生成。'));
+          continue;
+        }
+        citedCard(item, '只读核查（未执行）', item.action);
+      }
+    }
+    if (result.status === 'needs_clarification' && result.questions?.length) {
+      const questions = node(doc, 'ul', 'knowledge-next-steps');
+      for (const question of result.questions) questions.append(node(doc, 'li', '', question));
+      $('results').append(questions);
+    }
+    if (evidence.length) {
+      const sources = node(doc, 'details', 'knowledge-claim-sources');
+      sources.append(node(doc, 'summary', '', `全部检索来源（${evidence.length}）`));
+      for (const hit of evidence) sources.append(evidenceCard(hit));
+      $('results').append(sources);
+    }
   }
   function resetConsent() { $('generation-consent').checked = false; $('generation-confirm').hidden = true; }
   async function generate() {
@@ -161,7 +225,7 @@ export function createKnowledgeView({ root, api }) {
     const view = generation; const action = ++queryGeneration;
     searchRequest?.abort(); searchRequest = new AbortController(); const signal = searchRequest.signal;
     const body = { query: $('query').value.trim(), collection, mode: $('mode').value,
-      model: $('generation-model').value.trim(), allow_model_call: true };
+      model: $('generation-model').value.trim(), max_output_tokens: Number($('generation-budget').value), allow_model_call: true };
     if (body.query.length > 2000) { message($('query-message'), '问题请限制在 2,000 字以内。', true); return; }
     generating = busy = true; resetConsent(); controls(); $('results').replaceChildren();
     message($('query-message'), '正在检索并生成诊断，最多等待 90 秒…');
@@ -234,6 +298,7 @@ export function createKnowledgeView({ root, api }) {
   $('mode').addEventListener('change', () => { $('generation-consent').checked = false; controls(); });
   $('generate').addEventListener('click', () => { if (busy) return; $('generation-confirm').hidden = false; $('generation-consent').checked = false; controls(); $('generation-model').focus(); });
   $('generation-model').addEventListener('input', () => { $('generation-consent').checked = false; controls(); });
+  $('generation-budget').addEventListener('change', () => { $('generation-consent').checked = false; controls(); });
   $('generation-consent').addEventListener('change', controls);
   $('generation-start').addEventListener('click', generate);
   $('generation-dismiss').addEventListener('click', () => { resetConsent(); controls(); });

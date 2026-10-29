@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal
 
 from ..knowledge import Document, KnowledgeError, MODEL, configured_store
+from ..diagnostic import DEFAULT_MAX_OUTPUT_TOKENS
 from .sessions import _local_history_request
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"], dependencies=[Depends(_local_history_request)])
@@ -34,6 +35,7 @@ class GenerateBody(BaseModel):
     collection: str = Field(default="public", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
     mode: Literal["hybrid", "bm25", "vector"] = "hybrid"
     model: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$")
+    max_output_tokens: int = Field(default=DEFAULT_MAX_OUTPUT_TOKENS, ge=256, le=8192)
     allow_model_call: bool
 
     @field_validator("allow_model_call")

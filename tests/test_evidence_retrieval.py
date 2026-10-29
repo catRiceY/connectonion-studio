@@ -215,3 +215,165 @@ def test_paired_strategy_order_alternates_even_with_extra_experiment(adjacent):
         assert len(value) == (3 if adjacent else 2)
         if adjacent:
             assert value[2] == (True, True)
+
+
+def context_passage(identifier, ordinal, **changes):
+    return passage(identifier, ordinal, **{"collection": "public", **changes})
+
+
+def context_bundle(anchors, rows, **kwargs):
+    from co_studio.retrieval_context import expand_context
+    return expand_context(anchors, rows, ranking=[], channels=[], variants=["missing-term"], **kwargs)
+
+
+def test_context_keeps_all_original_anchors_before_neighbours():
+    rows = [context_passage("a", 0, content="## State:\nOriginal state"),
+            context_passage("b", 1, content="Only running sessions replay events."),
+            context_passage("c", 0, doc_id="other", source_uri="studio://test/other")]
+    anchors = [{**rows[0], "score": 0.4}, {**rows[2], "score": 0.3}]
+    original = deepcopy(anchors)
+    result, plan = context_bundle(anchors, rows)
+    assert [row["chunk_id"] for row in result] == ["a", "c", "b"]
+    assert [row["score"] for row in result[:2]] == [.4, .3]
+    assert all(row["retrieval_role"] == "anchor" for row in result[:2])
+    assert result[2]["anchor_chunk_id"] == "a"
+    assert result[2]["score"] is None
+    assert plan["anchor_count"] == 2 and plan["context_count"] == 1
+    assert anchors == original
+
+
+@pytest.mark.parametrize("changes", [{"doc_id": "other"}, {"version": "v2"},
+    {"content_hash": "new"}, {"ordinal": 3}, {"source_uri": "studio://test/other"}])
+def test_context_neighbours_cannot_cross_revision_source_or_gap(changes):
+    anchor = context_passage("a", 0)
+    other = {**context_passage("b", 1), **changes}
+    result, _ = context_bundle([anchor], [anchor, other])
+    assert [row["chunk_id"] for row in result] == ["a"]
+
+
+def test_context_requires_single_collection_and_exact_snapshot_anchors():
+    from co_studio.knowledge import KnowledgeError
+    anchor = context_passage("a", 0)
+    with pytest.raises(KnowledgeError, match="scope"):
+        context_bundle([anchor], [anchor, context_passage("private", 1, collection="private")])
+    for key, value in (("version", "changed"), ("content_hash", "changed"), ("content", "changed"), ("collection", "private")):
+        with pytest.raises(KnowledgeError, match="snapshot"):
+            context_bundle([{**anchor, key: value}], [anchor])
+
+
+def test_context_rejects_duplicate_snapshot_or_anchor_identity():
+    from co_studio.knowledge import KnowledgeError
+    anchor = context_passage("a", 0)
+    with pytest.raises(KnowledgeError, match="snapshot"):
+        context_bundle([anchor], [anchor, anchor])
+    with pytest.raises(KnowledgeError, match="Duplicate"):
+        context_bundle([anchor, anchor], [anchor])
+
+
+def test_context_unicode_budget_counts_utf8_and_never_truncates_evidence():
+    anchor = context_passage("a", 0)
+    neighbour = context_passage("b", 1, content="中文内容" * 100)
+    result, metadata = context_bundle([anchor], [anchor, neighbour], max_context_bytes=400)
+    assert len(result) == 1 and metadata["context_budget_skips"] == 1
+    result, metadata = context_bundle([anchor], [anchor, neighbour], max_context_bytes=1200)
+    assert result[1]["content"] == neighbour["content"]
+    assert metadata["context_text_bytes"] == 1200
+
+
+def test_context_total_budget_includes_metadata_and_fails_if_anchors_alone_overflow():
+    from co_studio.knowledge import KnowledgeError
+    anchor = context_passage("a", 0, content="x" * 1100)
+    with pytest.raises(KnowledgeError, match="exceeds"):
+        context_bundle([anchor], [anchor], max_total_bytes=1024)
+    anchor = context_passage("a", 0)
+    neighbour = context_passage("b", 1, content="x" * 600)
+    result, metadata = context_bundle([anchor], [anchor, neighbour], max_total_bytes=1024)
+    assert len(result) == 1
+    assert metadata["evidence_json_bytes"] <= 1024
+
+
+def test_context_supports_distinct_source_and_channel_without_crowding_anchors():
+    from co_studio.retrieval_context import expand_context
+    rows = [context_passage(f"a{i}", i) for i in range(8)]
+    independent = context_passage("other", 0, doc_id="other", source_uri="studio://test/other")
+    rows.append(independent)
+    result, plan = expand_context(rows[:5], rows, ranking=[("a5", .9), ("other", .8)],
+        channels=[[("other", .9)]], variants=["missing-term"], context_limit=2)
+    assert [row["chunk_id"] for row in result[:5]] == [f"a{i}" for i in range(5)]
+    assert result[5]["chunk_id"] == "other" and result[5]["retrieval_role"] == "supporting_anchor"
+    assert plan["context_count"] <= 2
+    assert len({row["chunk_id"] for row in result}) == len(result)
+
+
+def test_context_open_code_boundary_prefers_continuation_over_previous_section():
+    previous = context_passage("previous", 0, content="# Old topic\nOld text")
+    anchor = context_passage("anchor", 1, content="# Current example\n```python\ncall(")
+    following = context_passage("following", 2, content="    argument=True\n)\n```")
+    result, _ = context_bundle([anchor], [previous, anchor, following], context_limit=1)
+    assert [row["chunk_id"] for row in result] == ["anchor", "following"]
+
+
+def test_context_partial_closing_fence_does_not_invent_an_open_block():
+    from co_studio.retrieval_context import _boundary_priority
+    start = context_passage("start", 0, content="```python\ncode")
+    previous = context_passage("previous", 1, content="continued code\n```\nPrior prose.")
+    anchor = context_passage("anchor", 2, content="A complete paragraph describing a condition.")
+    following = context_passage("following", 3, content="The qualifier applies only in the stated mode.")
+    assert _boundary_priority(anchor, following) < _boundary_priority(anchor, previous)
+    result, _ = context_bundle([anchor], [start, previous, anchor, following], context_limit=1)
+    assert [row["chunk_id"] for row in result] == ["anchor", "following"]
+
+
+def test_context_fence_state_tracks_whole_revision_and_nested_delimiters():
+    from co_studio.retrieval_context import _fence_boundaries
+    rows = [context_passage("first", 0, content="````markdown\nExample"),
+            context_passage("second", 1, content="```python\ncall()\n```"),
+            context_passage("third", 2, content="````\nClosed")]
+    assert _fence_boundaries(rows) == {"first": True, "second": True, "third": False}
+    assert _fence_boundaries(rows[1:]) == {}
+    changed = [{**rows[1], "version": "v2"}]
+    assert _fence_boundaries(changed) == {}
+
+
+def test_context_fence_continuation_retained_despite_previous_list_introduction():
+    previous = context_passage("previous", 0, content="Configuration:")
+    anchor = context_passage("anchor", 1, content="- key\n```text\nFlow\n  |")
+    following = context_passage("following", 2, content="Next step\n```\nEnd")
+    result, _ = context_bundle([anchor], [previous, anchor, following], context_limit=1)
+    assert [row["chunk_id"] for row in result] == ["anchor", "following"]
+
+
+@pytest.mark.parametrize("kwargs", [{"context_limit": True}, {"context_limit": 13},
+    {"max_context_bytes": -1}, {"max_context_bytes": 24001}, {"max_context_bytes": "12000"},
+    {"max_total_bytes": 0}, {"max_total_bytes": 64001}, {"collection": "' OR true;--"}])
+def test_context_invalid_bounds_or_collection_rejected_before_io(kwargs):
+    with pytest.raises(KnowledgeError):
+        KnowledgeStore("never-connect").search_context("example", **kwargs)
+
+
+def test_context_zero_supplement_budget_preserves_anchor_count():
+    rows = [context_passage("a", 0), context_passage("b", 1)]
+    result, plan = context_bundle([rows[0]], rows, context_limit=0)
+    assert [row["chunk_id"] for row in result] == ["a"]
+    assert plan["context_count"] == 0
+
+
+@pytest.mark.parametrize("role", ["adjacent_context", "supporting_anchor", "unknown"])
+def test_sparse_anchor_ranking_never_counts_supplements_as_top5(role):
+    from co_studio.evidence_eval import score_context_evidence
+    labels = {"required": label()}
+    requirements = [["required"]]
+    hits = [hit(content="unrelated", retrieval_role="anchor"), hit(retrieval_role=role)]
+    top5 = score_evidence(hits, requirements, labels)
+    assert top5["covered_evidence_units"] == 0
+    assert top5["evidence_recall_at_5"] == 0
+    assert top5["reciprocal_rank_at_5"] == 0
+    assert score_context_evidence(hits, requirements, labels)["evidence_recall_in_context"] == 1
+
+
+def test_top5_preserves_legacy_roleless_hits_and_counts_anchor_ranks_only():
+    labels = {"required": label()}
+    assert score_evidence([hit()], [["required"]], labels)["evidence_recall_at_5"] == 1
+    hits = [hit(content="supplement", retrieval_role="adjacent_context"),
+            hit(content="unrelated", retrieval_role="anchor"), hit(retrieval_role="anchor")]
+    assert score_evidence(hits, [["required"]], labels)["reciprocal_rank_at_5"] == .5
