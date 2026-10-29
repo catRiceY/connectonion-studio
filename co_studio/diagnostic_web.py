@@ -16,6 +16,32 @@ TIMEOUT_SECONDS = 90.0
 MAX_ACTIVE = 2
 MAX_RESULT_BYTES = 256_000
 
+# Worker exceptions can contain credentials, provider response bodies and user
+# input. Send only a fixed category across the subprocess boundary; the parent
+# supplies its own text and status, never a message supplied by the provider.
+PROVIDER_FAILURES = {
+    "insufficient_credits": (402, "ConnectOnion 模型账户额度不足。请补充额度或明确配置其他模型；未自动重试，仍可使用免费证据检索。"),
+    "paid_account_required": (402, "当前模型需要已开通的付费账户。请检查模型权限；未自动切换模型或账户。"),
+    "authentication_failed": (502, "模型服务鉴权失败。请检查所选模型的凭据；不会在页面显示密钥或自动更换账户。"),
+    "permission_denied": (502, "模型服务拒绝访问。请核对模型和账户权限；未自动重试。"),
+    "output_truncated": (502, "模型输出达到长度上限，诊断未完成。网页输出上限固定为 2048 Token；如需调整，请使用 CLI 的 --max-output-tokens 参数并重新确认调用。本次请求仍可能计费。"),
+}
+_ERROR_CATEGORIES = {
+    "InsufficientCreditsError": "insufficient_credits",
+    "PaidModelRequiredError": "paid_account_required",
+    "LLMAuthenticationError": "authentication_failed",
+    "AuthenticationError": "authentication_failed",
+    "PermissionDeniedError": "permission_denied",
+    "TruncatedResponseError": "output_truncated",
+    "LengthFinishReasonError": "output_truncated",
+}
+
+
+def _failure_envelope(error):
+    error_type = getattr(error, "provider_error_type", type(error).__name__)
+    code = _ERROR_CATEGORIES.get(error_type) if isinstance(error_type, str) else None
+    return {"error": code} if code else None
+
 
 async def _stop(process):
     if process.returncode is None:
@@ -45,12 +71,18 @@ async def _exchange(process, body):
         if len(data) > MAX_RESULT_BYTES:
             raise KnowledgeError("Diagnosis exceeded its output limit; result withheld")
     await process.wait()
-    if process.returncode:
-        raise KnowledgeError("Model diagnosis failed; no unverified result was returned")
     try:
         result = json.loads(data)
     except (ValueError, UnicodeError):
         raise KnowledgeError("Invalid diagnostic response; result withheld") from None
+    if process.returncode:
+        if isinstance(result, dict) and set(result) == {"error"}:
+            code = result["error"]
+            if isinstance(code, str) and code in PROVIDER_FAILURES:
+                from fastapi import HTTPException
+                status, detail = PROVIDER_FAILURES[code]
+                raise HTTPException(status, detail)
+        raise KnowledgeError("Model diagnosis failed; no unverified result was returned")
     if not isinstance(result, dict) or result.get("status") not in {
         "hypotheses", "insufficient_evidence", "conflicting_evidence"
     }:
@@ -134,7 +166,10 @@ def main():
             return 1
         sys.stdout.buffer.write(encoded)
         return 0
-    except Exception:
+    except Exception as error:
+        envelope = _failure_envelope(error)
+        if envelope:
+            sys.stdout.buffer.write(json.dumps(envelope).encode())
         return 1
 
 

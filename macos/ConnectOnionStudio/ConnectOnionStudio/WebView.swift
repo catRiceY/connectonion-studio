@@ -23,6 +23,9 @@ struct WebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        if StudioServer.isPreview {
+            configuration.websiteDataStore = .nonPersistent()
+        }
         // Same-origin loopback app; JS on. ATS permits the numeric loopback 127.0.0.1 without an
         // exception (only the "localhost" hostname would need NSAllowsLocalNetworking — see README).
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -193,6 +196,8 @@ final class WebUpdater: NSObject, SPUUserDriver {
     /// Create + start the updater with THIS object as the user driver. Automatic background checks +
     /// downloads come from Info.plist (SUFeedURL / SUEnableAutomaticChecks / SUAutomaticallyUpdate).
     func start() {
+        // Local preview bundles must never fetch or install a production update.
+        guard !StudioServer.isPreview else { return }
         guard updater == nil else { return }
         let u = SPUUpdater(hostBundle: .main, applicationBundle: .main, userDriver: self, delegate: nil)
         do {

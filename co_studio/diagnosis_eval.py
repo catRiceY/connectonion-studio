@@ -16,10 +16,10 @@ import math
 from pathlib import Path
 import time
 
-from .diagnostic import DiagnosticDraft, generate
+from .diagnostic import DEFAULT_MAX_OUTPUT_TOKENS, DiagnosticDraft, generate, validate_output_budget
 from .evidence_eval import corpus_manifest, resolve_labels, score_evidence
 from .evaluation import EvaluationError, _new_output, _write_json
-from .knowledge import configured_store
+from .knowledge import KnowledgeError, configured_store
 from .model_eval import normalize_usage
 
 PROTOCOL = "generated-diagnosis-review-v1"
@@ -56,8 +56,8 @@ def _failure_details(exc):
                 "provider_reported_cost_usd": raw_usage.get("provider_reported_cost_usd"),
             })
     choices = getattr(completion, "choices", []) or []
-    reason = getattr(choices[0], "finish_reason", None) if choices else None
-    if reason not in {"length", "stop", "content_filter", "tool_calls", "function_call"}:
+    reason = getattr(choices[0], "finish_reason", None) if choices else getattr(exc, "reason", None)
+    if reason not in {"length", "max_tokens", "max_output_tokens", "stop", "content_filter", "tool_calls", "function_call"}:
         reason = None
     status = getattr(exc, "status_code", None)
     return {"provider_error_type": type(exc).__name__, "provider_finish_reason": reason,
@@ -65,7 +65,12 @@ def _failure_details(exc):
             "usage": usage}
 
 
-def make_plan(*, dataset=DEFAULT_DATASET, case_ids=None, split="all"):
+def make_plan(*, dataset=DEFAULT_DATASET, case_ids=None, split="all",
+              max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS):
+    try:
+        validate_output_budget(max_output_tokens)
+    except KnowledgeError:
+        raise EvaluationError("Output token budget must be an integer between 256 and 8192") from None
     if split not in {"dev", "holdout", "all"}:
         raise EvaluationError("Invalid split")
     source = Path(dataset).read_text(encoding="utf-8")
@@ -96,6 +101,8 @@ def make_plan(*, dataset=DEFAULT_DATASET, case_ids=None, split="all"):
             "dataset_sha256": hashlib.sha256(source.encode()).hexdigest(),
             "framework_version": distribution.version, "collection": "public", "split": split,
             "cases": cases, "labels": labels, "max_dispatches": len(cases),
+            "max_output_tokens_requested": max_output_tokens,
+            "output_budget_note": "Fixed before dispatch and never automatically increased or retried; changing this cap defines a new experiment, not a replacement of failed trials.",
             "independent_groups": len({case["group_id"] for case in cases}),
             "labels_review_status": "agent_source_checked_pending_human_review",
             "holdout_policy": "Previously exposed holdout is fixed regression, not fresh generalization evidence; no tuning on results.",
@@ -186,7 +193,8 @@ def _review_template(manifest_hash, rows):
 
 
 def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEFAULT_DATASET,
-               case_ids=None, split="all", _test_store=None, _test_complete=None):
+               case_ids=None, split="all", max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+               _test_store=None, _test_complete=None):
     if allow_model_calls is not True:
         raise EvaluationError("Explicit --allow-model-calls consent is required")
     if (not isinstance(model, str) or not model.strip() or len(model) > 200
@@ -194,7 +202,7 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
         raise EvaluationError("An explicit model ID, not an endpoint or credential, is required")
     if (_test_store is None) != (_test_complete is None):
         raise EvaluationError("Test store and completion must be supplied together")
-    plan = make_plan(dataset=dataset, case_ids=case_ids, split=split)
+    plan = make_plan(dataset=dataset, case_ids=case_ids, split=split, max_output_tokens=max_output_tokens)
     if type(max_calls) is not int or not len(plan["cases"]) <= max_calls <= 16:
         raise EvaluationError("Max calls must cover the full plan and be at most 16")
     store = _test_store if _test_store is not None else configured_store()
@@ -219,6 +227,7 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
                               "not_run_after_provider_block" if provider_block else "error"),
                    "dispatched": False, "provider_block": deepcopy(provider_block),
                    "provider_error_type": None, "provider_finish_reason": None, "provider_http_status": None,
+                   "failure_phase": None, "validation_errors": [],
                    "model_output": None, "answer": None, "claims": [], "error_type": None,
                    "started_at": None, "finished_at": None, "end_to_end_ms": None, "usage": None}
             def complete(*args, **kwargs):
@@ -261,7 +270,8 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
                 row["started_at"] = datetime.now(timezone.utc).isoformat()
                 start = time.perf_counter()
                 try:
-                    row["answer"] = generate(observed, case["query"], model=model.strip(), complete=complete)
+                    row["answer"] = generate(observed, case["query"], model=model.strip(), complete=complete,
+                                             max_output_tokens=plan["max_output_tokens_requested"])
                     row["status"] = "completed"
                 except KeyboardInterrupt:
                     row["status"], interrupted = "interrupted", True
@@ -269,6 +279,8 @@ def run_trials(output, *, model, max_calls, allow_model_calls=False, dataset=DEF
                     row["error_type"] = type(exc).__name__
                     if row["provider_error_type"] is None:
                         row["provider_error_type"] = getattr(exc, "provider_error_type", None)
+                    row["failure_phase"] = getattr(exc, "failure_phase", None)
+                    row["validation_errors"] = getattr(exc, "validation_errors", [])
                 finally:
                     row["end_to_end_ms"] = (time.perf_counter() - start) * 1000
                     row["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -428,13 +440,15 @@ def main(argv=None):
     parser.add_argument("--model")
     parser.add_argument("--allow-model-calls", action="store_true")
     parser.add_argument("--max-calls", type=int)
+    parser.add_argument("--max-output-tokens", type=int, default=DEFAULT_MAX_OUTPUT_TOKENS)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--review", type=Path)
     args = parser.parse_args(argv)
     try:
         if args.action == "plan":
-            result = make_plan(dataset=args.dataset, case_ids=args.case_ids, split=args.split)
+            result = make_plan(dataset=args.dataset, case_ids=args.case_ids, split=args.split,
+                               max_output_tokens=args.max_output_tokens)
             result = {**result, "cases": [{key: row[key] for key in ("case_id", "group_id", "split", "query")}
                                           for row in result["cases"]]}
             result.pop("labels")
@@ -443,7 +457,8 @@ def main(argv=None):
         elif args.action == "run":
             result = run_trials(args.output, model=args.model, max_calls=args.max_calls,
                                 allow_model_calls=args.allow_model_calls, dataset=args.dataset,
-                                case_ids=args.case_ids, split=args.split)
+                                case_ids=args.case_ids, split=args.split,
+                                max_output_tokens=args.max_output_tokens)
         else:
             if args.run_dir is None or args.review is None:
                 parser.error("--run-dir and --review are required")

@@ -39,7 +39,14 @@ def source_hashes(directory: Path) -> dict[str, str]:
 
 
 def validate_target(python: Path, repo: Path = REPO) -> Path:
-    root = (repo / "macos/dist/python").resolve()
+    dist = (repo / "macos/dist").absolute()
+    root = python.absolute().parent.parent
+    # Preview runs own a fresh, non-overwriting child. Never accept a symlink
+    # that redirects synchronization into an unrelated interpreter/environment.
+    relative = root.relative_to(dist) if root.is_relative_to(dist) else None
+    preview = relative is not None and len(relative.parts) == 3 and relative.parts[0] == "previews" and relative.parts[-1] == "python"
+    if (root != dist / "python" and not preview) or root.resolve() != root:
+        raise ValueError("Target must be this checkout's owned macos/dist Python bundle")
     resolved = python.resolve(strict=True)
     if not resolved.is_relative_to(root) or resolved == root:
         raise ValueError("Target must be this checkout's macos/dist/python interpreter")

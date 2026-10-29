@@ -13,7 +13,18 @@ STUDIO_HOST = "127.0.0.1"  # manager is loopback-only: agent ports are unauthent
 STUDIO_PORT = 9900
 AGENT_PORT_RANGE = range(8000, 8100)
 
-STUDIO_HOME = Path.home() / ".co-studio"
+def _configured_directory(name: str, default: Path) -> Path:
+    """Explicit absolute paths let preview builds avoid the user's live data."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    directory = Path(value)
+    if not value.strip() or not directory.is_absolute():
+        raise ValueError(f"{name} must be a non-empty absolute directory")
+    return directory.resolve()
+
+
+STUDIO_HOME = _configured_directory("STUDIO_DATA_DIR", Path.home() / ".co-studio")
 SETTINGS_FILE = STUDIO_HOME / "config.json"
 SETTINGS_LOCK = STUDIO_HOME / "config.lock"
 DEFAULT_AGENTS_DIR = STUDIO_HOME / "agents"
@@ -70,7 +81,7 @@ def save_appearance(value: str) -> None:
 _saved = _read_settings().get("agents_dir")
 AGENTS_DIR = Path(_saved).expanduser() if _saved else DEFAULT_AGENTS_DIR
 
-MAIN_CO_DIR = Path.home() / ".co"
+MAIN_CO_DIR = _configured_directory("AGENT_CONFIG_PATH", Path.home() / ".co")
 KEYS_ENV = MAIN_CO_DIR / "keys.env"
 
 PACKAGE_DIR = Path(__file__).resolve().parent
