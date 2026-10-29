@@ -287,7 +287,7 @@ class KnowledgeStore:
             result = conn.execute("DELETE FROM studio_knowledge.documents WHERE doc_id=%s", (doc_id,))
         return {"deleted": bool(result.rowcount)}
 
-    def search(self, query: str, *, collection="public", mode="hybrid", k=5, expand_query=True, adjacent_context=False):
+    def _search_snapshot(self, query: str, *, collection="public", mode="hybrid", k=5, expand_query=True, adjacent_context=False):
         if not isinstance(query, str) or not tokenize(query) or len(query) > 2000 or mode not in {"bm25", "vector", "hybrid"} or type(k) is not int or not 1 <= k <= 20:
             raise KnowledgeError("Invalid search request")
         if type(expand_query) is not bool or type(adjacent_context) is not bool:
@@ -333,7 +333,7 @@ class KnowledgeStore:
         if adjacent_context:
             from .query_expansion import with_next_passages
             hits = with_next_passages(hits, rows, k)
-        return {"query": query, "mode": mode, "collection": collection,
+        result = {"query": query, "mode": mode, "collection": collection,
                 "hits": hits, "embedding_model": self.model_id,
                 "query_plan": {**plan, "candidate_budget_per_channel": candidate_budget,
                                "candidate_budget_total": candidate_budget * (2 if mode == "hybrid" else 1),
@@ -341,6 +341,37 @@ class KnowledgeStore:
                                "dense_candidate_budget": dense_budget if mode != "bm25" else 0,
                                "adjacent_candidate_budget": reserve,
                                "context_policy": "next-passage-experiment-v1" if adjacent_context else "none"}}
+        return result, rows, ranking, lexical_lists + dense_lists
+
+    def search(self, query: str, *, collection="public", mode="hybrid", k=5, expand_query=True, adjacent_context=False):
+        """The original ranked top-k search contract, without context expansion."""
+        result, _, _, _ = self._search_snapshot(query, collection=collection, mode=mode,
+            k=k, expand_query=expand_query, adjacent_context=adjacent_context)
+        return result
+
+    def search_context(self, query: str, *, collection="public", mode="hybrid", k=5,
+                       expand_query=True, context_limit=8, max_context_bytes=12000,
+                       max_total_bytes=32000):
+        """Rank anchors first, then add separately budgeted snapshot context.
+
+        Supplemental passages do not replace or reorder top-k anchors. This is
+        an evidence bundle, not a new Recall@k ranking; its bounded supplements
+        and provenance are reported separately in query_plan.
+        """
+        from .retrieval_context import expand_context, validate_limits
+        validate_limits(context_limit, max_context_bytes, max_total_bytes)
+        if not isinstance(collection, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", collection):
+            raise KnowledgeError("Invalid collection")
+        result, rows, ranking, channels = self._search_snapshot(query, collection=collection,
+            mode=mode, k=k, expand_query=expand_query)
+        # Rows and all component rankings came from the exact same filtered
+        # repeatable-read transaction. No second read can mix source revisions.
+        scoped = [{**row, "collection": collection} for row in rows]
+        anchors = [{**row, "collection": collection} for row in result["hits"]]
+        hits, metadata = expand_context(anchors, scoped, ranking=ranking, channels=channels,
+            variants=result["query_plan"]["variants"], context_limit=context_limit,
+            max_context_bytes=max_context_bytes, max_total_bytes=max_total_bytes)
+        return {**result, "hits": hits, "query_plan": {**result["query_plan"], **metadata}}
 
     def validate_citations(self, findings: list[dict], evidence: list[dict]) -> dict:
         """Check current version + exact supporting quote, not semantic entailment."""
@@ -348,6 +379,7 @@ class KnowledgeStore:
         if not findings:
             return {"valid": False, "reason": "No findings"}
         with self.connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             for finding in findings:
                 citations = finding.get("citations", [])
                 quote = finding.get("text", "")
@@ -357,8 +389,12 @@ class KnowledgeStore:
                     row = known.get(identifier)
                     if not row or quote not in row["content"]:
                         return {"valid": False, "reason": "Quote is not supported by supplied evidence"}
-                    current = conn.execute("SELECT c.content,d.version FROM studio_knowledge.chunks c JOIN studio_knowledge.documents d USING(doc_id) WHERE chunk_id=%s", (identifier,)).fetchone()
-                    if not current or current != (row["content"], row["version"]):
+                    current = conn.execute("SELECT c.content,d.version,d.collection,d.content_hash,d.source_uri,d.doc_id FROM studio_knowledge.chunks c JOIN studio_knowledge.documents d USING(doc_id) WHERE chunk_id=%s", (identifier,)).fetchone()
+                    if (not current or current[:2] != (row["content"], row["version"])
+                            or ("collection" in row and current[2] != row["collection"])
+                            or ("content_hash" in row and current[3] != row["content_hash"])
+                            or ("source_uri" in row and current[4] != row["source_uri"])
+                            or ("doc_id" in row and current[5] != row["doc_id"])):
                         return {"valid": False, "reason": "Evidence version is stale or removed"}
         return {"valid": True, "reason": "Current sources and exact quotes verified; no semantic entailment claim"}
 

@@ -131,6 +131,10 @@ body.glow-in::before, body.glow-in::after { opacity: 1; }
   border: 1px solid var(--hairline);
   border-radius: 22px;
   overflow: hidden;
+  /* The card is a clip boundary, not a scroll container. Hidden translated
+     drawers must not let focus/scrollIntoView shift the whole sidebar. Inner
+     content panes retain their own vertical scrolling. */
+  overflow: clip;
   box-shadow: 0 18px 52px rgba(38, 37, 35, 0.13);
 }
 
@@ -1144,6 +1148,10 @@ body.shell-ready #app.is-knowledge #knowledge-view, body.shell-ready #app.is-app
 #knowledge-generation-confirm .field { margin-top: 12px; }
 .knowledge-hypothesis h3 { font-size: 14px; margin: 0 0 10px; }
 .knowledge-hypothesis blockquote { margin: 8px 0; padding-left: 12px; border-left: 2px solid var(--hairline); }
+.knowledge-claim-sources { min-width: 0; font: 13px/1.6 var(--font-ui); }
+.knowledge-claim-sources summary { cursor: pointer; color: var(--ink-2); margin: 8px 0; }
+.knowledge-claim-sources .history-note { overflow-wrap: anywhere; }
+.knowledge-claim-sources > .knowledge-evidence { margin-top: 12px; }
 .knowledge-next-steps { font-size: 13px; line-height: 1.6; padding-left: 20px; }
 .tool-policy-option { display: flex; align-items: center; gap: 9px; font-size: 13px; margin: 14px 0; }
 .tool-policy-option input { accent-color: var(--accent); }
@@ -1259,6 +1267,8 @@ body.shell-ready #app.is-knowledge #knowledge-view, body.shell-ready #app.is-app
 /* ---- agent detail — right-side panel that overlaps the grid ------- */
 #detail-view {
   position: absolute; inset: 0; z-index: 28;
+  overflow: hidden;
+  overflow: clip;                   /* contain the off-canvas panel's 102% translation */
   pointer-events: none;              /* the grid on the left stays live; only the panel captures */
 }
 .detail-panel {

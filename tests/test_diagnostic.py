@@ -1,7 +1,7 @@
 from unittest.mock import Mock
 import pytest
 
-from co_studio.diagnostic import DiagnosticDraft, generate
+from co_studio.diagnostic import DiagnosticDraft, generate_v1 as generate
 from co_studio.knowledge import KnowledgeError
 
 

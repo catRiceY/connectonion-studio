@@ -625,6 +625,8 @@
             <strong>生成中文诊断</strong>
             <p class="history-note">问题和所选来源中的检索片段将发送给模型服务，可能产生费用。请勿提交密钥或未授权外发的资料；此操作不会执行工具或修改 Agent。</p>
             <label class="field"><span>Model ID（使用本机已配置凭据）</span><input id="knowledge-generation-model" type="text" maxlength="128" autocomplete="off" placeholder="填写要使用的模型 ID"></label>
+            <label class="field"><span>输出上限（Token）</span><select id="knowledge-generation-budget"><option value="2048">2048 · 较低输出预算</option><option value="4096" selected>4096 · 与 CLI 默认一致</option></select></label>
+            <p class="history-note">此上限不包含输入费用，也不是费用硬上限；不会自动提高预算或重试。修改选择后需重新确认。</p>
             <label class="knowledge-consent"><input id="knowledge-generation-consent" type="checkbox"> 我同意发送这些内容并承担可能的模型费用</label>
             <div class="workspace-actions"><button id="knowledge-generation-start" class="btn btn-primary" type="button" disabled>确认并生成</button><button id="knowledge-generation-dismiss" class="btn btn-ghost" type="button">返回检索</button></div>
           </div>

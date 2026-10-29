@@ -131,3 +131,40 @@ def test_adjacent_experiment_total_budget_and_revision_integrity(store, mode):
     assert len(result["hits"]) <= 5
     assert len({hit["chunk_id"] for hit in result["hits"]}) == len(result["hits"])
     assert all(hit["source_uri"] == item.source_uri for hit in result["hits"])
+
+
+@pytest.mark.parametrize("mode", ["bm25", "vector", "hybrid"])
+def test_context_snapshot_keeps_original_rank_and_scope(store, mode):
+    scope = "context_" + mode
+    item = doc(collection=scope, text=("restart session recorded history " * 40)
+               + "\n## Restore:\nOnly running sessions replay stored events. Completed sessions retain history without replay.")
+    other = doc(collection="private_context_" + mode, text="Private restart secret records must never cross the selected collection boundary.")
+    store.import_document(item)
+    store.import_document(other)
+    old = store.search("restart history", collection=scope, mode=mode, k=1)
+    result = store.search_context("restart history", collection=scope, mode=mode, k=1)
+    assert result["hits"][0]["chunk_id"] == old["hits"][0]["chunk_id"]
+    assert result["hits"][0]["score"] == old["hits"][0]["score"]
+    assert result["query_plan"]["anchor_count"] == 1
+    assert len(result["hits"]) > 1
+    assert all(hit["collection"] == scope and hit["source_uri"] == item.source_uri for hit in result["hits"])
+    assert len({hit["chunk_id"] for hit in result["hits"]}) == len(result["hits"])
+    findings = [{"text": hit["content"], "citations": [hit["chunk_id"]]} for hit in result["hits"]]
+    assert store.validate_citations(findings, result["hits"])["valid"]
+    for key, value in (("collection", "public"), ("content_hash", "wrong"),
+                       ("source_uri", "studio://forged/source"), ("doc_id", "wrong")):
+        tampered = [{**hit, key: value} for hit in result["hits"]]
+        assert not store.validate_citations(findings, tampered)["valid"]
+    store.import_document(replace(item, version="v2", text=item.text + "\nAn updated source revision."))
+    assert not store.validate_citations(findings, result["hits"])["valid"]
+
+
+def test_context_and_original_search_are_read_only(store):
+    collection = "read_only_context"
+    store.import_document(doc(collection=collection))
+    before = store.documents(collection)
+    found = store.search_context("restart port", collection=collection)
+    after = store.documents(collection)
+    assert before == after
+    assert found["query_plan"]["context_policy"] == "snapshot-context-v2"
+    assert found["query_plan"]["evidence_json_bytes"] <= found["query_plan"]["max_total_bytes"]

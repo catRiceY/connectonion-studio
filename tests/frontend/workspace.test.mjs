@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import { createApprovalsView } from '../../co_studio/frontend/js/approvals.js';
 import { createToolConfig } from '../../co_studio/frontend/js/tool-config.js';
 import { createKnowledgeView } from '../../co_studio/frontend/js/knowledge.js';
+import { READONLY_VERIFICATION_ACTIONS, VERIFICATION_POLICY, isReadOnlyVerificationStep } from '../../co_studio/frontend/js/verification-policy.js';
 import * as api from '../../co_studio/frontend/js/api.js';
 
 class Element {
@@ -40,6 +42,16 @@ function client(defaults, overrides = {}) {
   return { api, calls };
 }
 const agents = [{ slug: 'alpha', name: 'Alpha' }, { slug: 'beta', name: 'Beta' }];
+
+test('Application shell and off-canvas drawer are clip boundaries, never focus scroll containers', () => {
+  const css = readFileSync(new URL('../../co_studio/frontend/css/app.css', import.meta.url), 'utf8');
+  const shell = css.match(/(?:^|\n)#app\s*\{([^}]+)\}/)?.[1];
+  const drawer = css.match(/(?:^|\n)#detail-view\s*\{([^}]+)\}/)?.[1];
+  assert.match(shell, /overflow:\s*clip\s*;/);
+  assert.match(drawer, /overflow:\s*clip\s*;/);
+  assert.match(css, /\.workspace-detail\s*\{[^}]*overflow-y:\s*auto/,
+    'only the inner detail pane should retain vertical scrolling');
+});
 const approval = (overrides = {}) => ({ id: 'call-a', agent_slug: 'alpha', session_id: 'session-a', turn_no: 1,
   call_id: 'tool-1', tool_name: 'write_note', arguments: { content: '<script>example</script>' }, binding: 'a'.repeat(64),
   status: 'pending', created_at: '2026-10-28T00:00:00Z', expires_at: '2099-01-01T00:00:00Z', reason: null, ...overrides });
@@ -167,8 +179,8 @@ test('Tool policy rejects invalid timeout locally and ignores stale Agent load',
 const documentRecord = { doc_id: 'a'.repeat(64), title: 'Timeout guide', source_uri: 'local:guide', version: '1', kind: 'document', chunk_count: 2 };
 const hit = { ...documentRecord, chunk_id: 'chunk-1', line_start: 1, line_end: 4, content: '<b>Read the timeout log</b>', score: 0.5 };
 function knowledge(t, overrides) {
-  const view = dom('knowledge', 'add import-save delete search diagnose generate generation-confirm generation-model generation-consent generation-start generation-dismiss generation-cancel query mode collection scope-note more retry status-retry title source version license text import-cancel body unavailable unavailable-text model list count empty message selection selected-title selected-source results query-message import explore import-message');
-  view.get('mode').value = 'hybrid'; view.get('version').value = '1';
+  const view = dom('knowledge', 'add import-save delete search diagnose generate generation-confirm generation-model generation-budget generation-consent generation-start generation-dismiss generation-cancel query mode collection scope-note more retry status-retry title source version license text import-cancel body unavailable unavailable-text model list count empty message selection selected-title selected-source results query-message import explore import-message');
+  view.get('mode').value = 'hybrid'; view.get('version').value = '1'; view.get('generation-budget').value = '4096';
   const network = client({ getKnowledgeStatus: async () => ({ configured: true, ready: true, embedding_model: 'local-model' }),
     listKnowledge: async () => ({ items: [documentRecord], total: 1, next_offset: null }),
     addKnowledge: async () => ({}), deleteKnowledge: async () => ({}), generateKnowledgeDiagnosis: async () => ({ status: 'insufficient_evidence', model_called: false, hypotheses: [], evidence: [] }),
@@ -264,12 +276,12 @@ test('Generated diagnosis requires separate explicit consent and exact selected 
   assert.equal(h.get('generation-start').disabled, true);
   await consent(h); await h.get('generation-start').click();
   assert.deepEqual(h.calls.find((c) => c.name === 'generateKnowledgeDiagnosis').args[0], {
-    query: '为什么无法连接？', model: 'co/test-model', mode: 'hybrid', collection: 'public', allow_model_call: true });
+    query: '为什么无法连接？', model: 'co/test-model', mode: 'hybrid', collection: 'public', max_output_tokens: 4096, allow_model_call: true });
   assert.equal(h.get('generation-consent').checked, false); assert.match(h.get('results').textContent, /未调用模型/);
 });
 test('Changing query, model or retrieval mode clears generation consent', async (t) => {
   const h = knowledge(t); await h.controller.open();
-  for (const [id, event] of [['query', 'input'], ['generation-model', 'input'], ['mode', 'change']]) {
+  for (const [id, event] of [['query', 'input'], ['generation-model', 'input'], ['mode', 'change'], ['generation-budget', 'change']]) {
     await consent(h); assert.equal(h.get('generation-start').disabled, false);
     await h.get(id).dispatch(event); assert.equal(h.get('generation-start').disabled, true);
   }
@@ -302,4 +314,106 @@ test('Generation failure restores controls without returning a fabricated diagno
   await h.controller.open(); await consent(h); await h.get('generation-start').click();
   assert.match(h.get('query-message').textContent, /timed out/); assert.equal(h.get('generate').disabled, false);
   assert.equal(h.get('results').textContent, ''); assert.equal(h.get('generation-cancel').hidden, true);
+});
+
+const evidenceUnit = { evidence_id: 'ev_' + 'c'.repeat(32), chunk_id: hit.chunk_id,
+  quote: hit.content, source_uri: hit.source_uri, version: hit.version,
+  content_hash: 'd'.repeat(64), chunk_hash: 'e'.repeat(64), line_start: 1, line_end: 4 };
+const cited = (text) => ({ text, evidence_ids: [evidenceUnit.evidence_id], evidence: [evidenceUnit] });
+const v2 = (overrides = {}) => ({ protocol_version: 'diagnostic-v2', status: 'answered', model_called: true,
+  verification_policy: VERIFICATION_POLICY,
+  model: 'co/test-model', max_output_tokens: 4096, claims: [cited('文档支持的回答')], limitations: [],
+  verification_steps: [], questions: [], message: '依据所选资料回答。', evidence: [hit], evidence_units: [evidenceUnit], ...overrides });
+
+test('V2 factual answers use server quotes and expandable sources rather than hypotheses', async (t) => {
+  const h = knowledge(t, { generateKnowledgeDiagnosis: async () => v2({
+    claims: [cited('<script>按原文回答</script>')], limitations: [cited('仅适用当前版本')],
+    verification_steps: [{ kind: 'inspect_client_version', action: READONLY_VERIFICATION_ACTIONS.inspect_client_version,
+      evidence_ids: [evidenceUnit.evidence_id], evidence: [evidenceUnit] }],
+  }) });
+  await h.controller.open(); await consent(h); await h.get('generation-start').click();
+  const text = h.get('results').textContent;
+  assert.match(text, /资料回答/); assert.match(text, /<script>按原文回答<\/script>/);
+  assert.match(text, /适用条件与限制/); assert.match(text, /只读核查（未执行）/);
+  assert.match(text, /diagnostic-v2.*4096 Token/); assert.match(text, /查看依据（1）/);
+  assert.match(text, /全部检索来源（1）/); assert.doesNotMatch(text, /可能原因/);
+  assert.ok(h.get('results').children.some((el) => el.tagName === 'details'));
+});
+
+test('V2 answer cards hide invented, wrong-version and mismatched-ID quotations', async (t) => {
+  for (const change of [{ quote: 'Invented' }, { version: 'stale' }, { chunk_id: 'other' },
+    { evidence_id: 'ev_other' }, { source_uri: 'private:other' }, { content_hash: 'changed' }, { line_start: 999 }]) {
+    const h = knowledge(t, { generateKnowledgeDiagnosis: async () => v2({
+      claims: [{ ...cited('UNSUPPORTED'), evidence: [{ ...evidenceUnit, ...change }] }],
+    }) });
+    await h.controller.open(); await consent(h); await h.get('generation-start').click();
+    assert.doesNotMatch(h.get('results').textContent, /UNSUPPORTED/);
+    assert.match(h.get('results').textContent, /内容未通过引用检查/);
+  }
+});
+
+test('V2 states distinguish clarification, refusal, missing evidence and conflict', async (t) => {
+  for (const [status, title] of [['needs_clarification', '需要补充信息'], ['refused', '无法执行此请求'],
+    ['insufficient_evidence', '证据不足'], ['conflicting_evidence', '证据存在冲突'], ['hypotheses', '诊断假设 · 待核实']]) {
+    const h = knowledge(t, { generateKnowledgeDiagnosis: async () => v2({ status,
+      questions: ['请提供客户端、版本和具体错误信息'], message: '服务器固定边界说明',
+      claims: [cited('受引用支持的主体')],
+    }) });
+    await h.controller.open(); await consent(h); await h.get('generation-start').click();
+    const text = h.get('results').textContent;
+    assert.match(text, new RegExp(title)); assert.match(text, /服务器固定边界说明/);
+    if (status === 'needs_clarification') assert.match(text, /请提供客户端、版本和具体错误信息/);
+    else assert.doesNotMatch(text, /请提供客户端、版本和具体错误信息/);
+    if (['needs_clarification', 'refused', 'insufficient_evidence'].includes(status)) assert.doesNotMatch(text, /受引用支持的主体/);
+  }
+});
+
+test('Output budget is explicit, bounded and requires fresh consent after change', async (t) => {
+  const h = knowledge(t); await h.controller.open(); await consent(h);
+  h.get('generation-budget').value = '2048'; await h.get('generation-budget').dispatch('change');
+  assert.equal(h.get('generation-start').disabled, true);
+  h.get('generation-consent').checked = true; await h.get('generation-consent').dispatch('change');
+  await h.get('generation-start').click();
+  assert.equal(h.calls.find((c) => c.name === 'generateKnowledgeDiagnosis').args[0].max_output_tokens, 2048);
+  await consent(h); h.get('generation-budget').value = '99999'; await h.get('generation-budget').dispatch('change');
+  h.get('generation-consent').checked = true; await h.get('generation-consent').dispatch('change');
+  await h.get('generation-start').click();
+  assert.equal(h.calls.filter((c) => c.name === 'generateKnowledgeDiagnosis').length, 1);
+});
+
+test('Read-only verification map is identical to the fixed server contract', () => {
+  const source = readFileSync(new URL('../../co_studio/diagnostic.py', import.meta.url), 'utf8');
+  assert.ok(source.includes(`VERIFICATION_POLICY = "${VERIFICATION_POLICY}"`));
+  const block = source.match(/READONLY_VERIFICATION_ACTIONS\s*=\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(block, 'server policy map must exist');
+  const pairs = [...block.matchAll(/"([a-z_]+)":\s*"([^"\n]*)"/g)];
+  assert.deepEqual(Object.fromEntries(pairs.map(([, kind, action]) => [kind, action])), READONLY_VERIFICATION_ACTIONS);
+});
+
+test('Read-only verification requires exact policy, enumerated kind and server wording', () => {
+  for (const [kind, action] of Object.entries(READONLY_VERIFICATION_ACTIONS)) {
+    assert.equal(isReadOnlyVerificationStep(VERIFICATION_POLICY, { kind, action }), true);
+    assert.equal(isReadOnlyVerificationStep(VERIFICATION_POLICY, { kind, action: `${action} co init ./` }), false);
+    assert.equal(isReadOnlyVerificationStep('unknown', { kind, action }), false);
+  }
+  for (const bad of [null, {}, { kind: 'execute_shell', action: 'co init ./ --template co-ai' },
+    { kind: 'toString', action: Object.prototype.toString }, { kind: {}, action: 'hidden' }]) {
+    assert.equal(isReadOnlyVerificationStep(VERIFICATION_POLICY, bad), false);
+  }
+});
+
+test('V2 hides legacy free-form, unknown-kind and tampered verification text', async (t) => {
+  for (const change of [
+    { policy: undefined, step: { action: 'co init ./ --template co-ai' } },
+    { policy: 'unknown', step: { kind: 'inspect_config', action: READONLY_VERIFICATION_ACTIONS.inspect_config } },
+    { policy: VERIFICATION_POLICY, step: { kind: 'write_config', action: 'co init ./ --template co-ai' } },
+    { policy: VERIFICATION_POLICY, step: { kind: 'inspect_config', action: 'co init ./ --template co-ai' } },
+  ]) {
+    const h = knowledge(t, { generateKnowledgeDiagnosis: async () => v2({ verification_policy: change.policy,
+      verification_steps: [{ ...change.step, evidence_ids: [evidenceUnit.evidence_id], evidence: [evidenceUnit] }],
+    }) });
+    await h.controller.open(); await consent(h); await h.get('generation-start').click();
+    assert.doesNotMatch(h.get('results').textContent, /co init|只读核查（未执行）/);
+    assert.match(h.get('results').textContent, /只读策略校验.*已隐藏/);
+  }
 });

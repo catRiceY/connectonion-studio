@@ -72,7 +72,10 @@ def resolve_labels(dataset: dict, docs_root: Path, installed_version: str) -> tu
 
 
 def score_evidence(hits: list[dict], requirements: list[list[str]], labels: dict) -> dict:
-    hits = hits[:5]
+    # A sparse result may have fewer than five anchors followed immediately by
+    # supplements. Those passages belong only to full-context metrics. Legacy
+    # search() results carry no role and remain ordinary ranked anchors.
+    hits = [hit for hit in hits if hit.get("retrieval_role", "anchor") == "anchor"][:5]
     matched, relevant_ranks = set(), []
     allowed = {key for alternatives in requirements for key in alternatives}
     for rank, hit in enumerate(hits, 1):
@@ -105,6 +108,24 @@ def corpus_manifest(store) -> dict:
             WHERE collection='public' GROUP BY d.doc_id ORDER BY source_uri""").fetchall()
     return {"collection": "public", "documents": len(rows), "chunks": sum(row[-1] for row in rows),
             "manifest_sha256": fingerprint(json.dumps(rows, ensure_ascii=False))}
+
+
+def score_context_evidence(hits: list[dict], requirements: list[list[str]], labels: dict) -> dict:
+    """Score the complete bounded context, never relabel it as Top-5 recall."""
+    allowed = {key for alternatives in requirements for key in alternatives}
+    matched = {key for hit in hits for key in allowed if
+               hit.get("source_uri") == labels[key]["source_uri"] and
+               hit.get("version") == labels[key]["version"] and
+               hit.get("content_hash") == labels[key]["content_hash"] and
+               labels[key]["quote"] in hit.get("content", "")}
+    covered = sum(bool(set(alternatives) & matched) for alternatives in requirements)
+    return {"required_evidence_units": len(requirements), "covered_evidence_units": covered,
+            "matched_evidence_ids": sorted(matched), "context_passages": len(hits),
+            "context_documents": len({row.get("source_uri") for row in hits}),
+            "context_bytes": sum(len(row.get("content", "").encode("utf-8")) for row in hits),
+            "evidence_recall_in_context": covered / len(requirements) if requirements else None,
+            "complete_evidence_in_context": covered == len(requirements) if requirements else None,
+            "answer_behavior_evaluated": False}
 
 
 def summarize(results: list[dict]) -> dict:

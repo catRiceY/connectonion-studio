@@ -1,0 +1,217 @@
+{
+  "dataset_id": "studio-diagnosis-transfer-v1",
+  "schema_version": 1,
+  "frozen_date": "2026-10-29",
+  "review_status": "agent_source_checked_pending_human_review",
+  "scope": "Four new source-topic groups authored before repair evaluation and reviewed after initial implementation. Agent-authored transfer sample, not an independent human blind benchmark.",
+  "documents": {
+    "init": {
+      "path": "cli/init.md",
+      "version": "1.9.2",
+      "sha256": "88718864770f13ea647786e6b95e2676e91470fcc7d61e04bca271d448a6bc6c"
+    },
+    "iteration": {
+      "path": "concepts/agent.md",
+      "version": "1.9.2",
+      "sha256": "547fe4f54e02391b5139991552e9789c0882999b02de7b1175d2bac8497437b0"
+    },
+    "modes": {
+      "path": "useful_plugins/tool_approval.md",
+      "version": "1.9.2",
+      "sha256": "51cc272d52d0ee8798a2273422541c33fcf30b18a1fb05982b7388ac0c79411f"
+    },
+    "signed": {
+      "path": "network/host.md",
+      "version": "1.9.2",
+      "sha256": "6b9f550dc3e5324fe0e13848ed7a403b4af64553cc6b2d7d922b9d948a7b9ff5"
+    }
+  },
+  "evidence": {
+    "init_global": {
+      "document": "init",
+      "line_start": 20,
+      "line_end": 23,
+      "quote": "It does **not** create or modify the current directory's `.env`, `.co/`,\n`agent.py`, or other project files—even when run inside an existing project."
+    },
+    "init_project": {
+      "document": "init",
+      "line_start": 57,
+      "line_end": 58,
+      "quote": "`co init ./` uses the global identity and initializes the selected directory.\nIt does not mint a separate project keypair."
+    },
+    "iterations_default": {
+      "document": "iteration",
+      "line_start": 399,
+      "line_end": 402,
+      "quote": "agent = Agent(\"calc\", tools=[calculate], max_iterations=5)"
+    },
+    "iterations_override": {
+      "document": "iteration",
+      "line_start": 414,
+      "line_end": 417,
+      "quote": "max_iterations=25  # Override just for this task"
+    },
+    "mode_limit": {
+      "document": "modes",
+      "line_start": 12,
+      "line_end": 12,
+      "quote": "| `full-access` | Explicit bounded approval bypass under the Host launch ceiling |"
+    },
+    "mode_todo": {
+      "document": "modes",
+      "line_start": 15,
+      "line_end": 15,
+      "quote": "Todo List progress never grants a permission mode; Plan is not a mode."
+    },
+    "signed_recipient": {
+      "document": "signed",
+      "line_start": 372,
+      "line_end": 374,
+      "quote": "refused with `401 unauthorized: wrong recipient`"
+    },
+    "signed_once": {
+      "document": "signed",
+      "line_start": 375,
+      "line_end": 377,
+      "quote": "sign each request with a fresh `nonce`."
+    }
+  },
+  "groups": [
+    {
+      "group_id": "init-scope",
+      "split": "holdout",
+      "category": "new_source_topic",
+      "origin": "agent_authored_source_inspected_before_repair_evaluation",
+      "review_status": "pending_human_review",
+      "expected_behavior": "answer",
+      "evidence_requirements": [
+        [
+          "init_global"
+        ],
+        [
+          "init_project"
+        ]
+      ],
+      "answer_points": [
+        "区分无路径co init的全局初始化与显式co init ./的项目配置，不声称无路径会初始化当前项目。",
+        "项目使用全局身份，不会自动创建独立项目密钥对；不运行命令或展示凭据。"
+      ],
+      "queries": [
+        {
+          "case_id": "init-zh",
+          "language": "zh",
+          "query": "在已有项目目录运行 co init，为什么没有 agent.py？co init ./ 会给项目另外生成身份吗？",
+          "origin": "agent_authored_not_real_user_traffic"
+        },
+        {
+          "case_id": "init-en",
+          "language": "en",
+          "query": "Does running co init inside a project create project files, and does co init ./ generate a separate identity?",
+          "origin": "agent_authored_not_real_user_traffic"
+        }
+      ]
+    },
+    {
+      "group_id": "iteration-limit",
+      "split": "holdout",
+      "category": "new_source_topic",
+      "origin": "agent_authored_source_inspected_before_repair_evaluation",
+      "review_status": "pending_human_review",
+      "expected_behavior": "answer",
+      "evidence_requirements": [
+        [
+          "iterations_default"
+        ],
+        [
+          "iterations_override"
+        ]
+      ],
+      "answer_points": [
+        "通过Agent的max_iterations设置默认上限。",
+        "可对单次agent.input传max_iterations覆盖，只针对该任务；不把达到上限等同任务成功。"
+      ],
+      "queries": [
+        {
+          "case_id": "iterations-zh",
+          "language": "zh",
+          "query": "如何给 Agent 设置默认 max_iterations，同时只为某一次 input 增加上限？",
+          "origin": "agent_authored_not_real_user_traffic"
+        },
+        {
+          "case_id": "iterations-en",
+          "language": "en",
+          "query": "How do I set an Agent's default max_iterations and override it for only one input call?",
+          "origin": "agent_authored_not_real_user_traffic"
+        }
+      ]
+    },
+    {
+      "group_id": "permission-ceiling",
+      "split": "holdout",
+      "category": "new_source_topic",
+      "origin": "agent_authored_source_inspected_before_repair_evaluation",
+      "review_status": "pending_human_review",
+      "expected_behavior": "answer",
+      "evidence_requirements": [
+        [
+          "mode_limit"
+        ],
+        [
+          "mode_todo"
+        ]
+      ],
+      "answer_points": [
+        "full-access仍受Host启动权限上限约束，不代表无限权限。",
+        "Todo进度不会授予权限；Plan不是权限模式，不建议通过修改任务文本绕过权限。"
+      ],
+      "queries": [
+        {
+          "case_id": "ceiling-zh",
+          "language": "zh",
+          "query": "tool_approval 的 full-access 是不受限制的权限吗？把 Todo 标记完成或者进入 Plan 会改变权限吗？",
+          "origin": "agent_authored_not_real_user_traffic"
+        },
+        {
+          "case_id": "ceiling-en",
+          "language": "en",
+          "query": "Does tool_approval full-access remove the Host launch ceiling, and can Todo progress or Plan mode grant permission?",
+          "origin": "agent_authored_not_real_user_traffic"
+        }
+      ]
+    },
+    {
+      "group_id": "signed-replay",
+      "split": "holdout",
+      "category": "new_source_topic",
+      "origin": "agent_authored_source_inspected_before_repair_evaluation",
+      "review_status": "pending_human_review",
+      "expected_behavior": "answer",
+      "evidence_requirements": [
+        [
+          "signed_recipient"
+        ],
+        [
+          "signed_once"
+        ]
+      ],
+      "answer_points": [
+        "签名请求的to必须对应目标Agent，转发到另一Agent会因wrong recipient被拒绝。",
+        "同一个签名请求不可重放；新请求应有新的nonce并重新签名，不建议绕过验证。"
+      ],
+      "queries": [
+        {
+          "case_id": "signed-zh",
+          "language": "zh",
+          "query": "host 的签名 HTTP 请求能直接转发到另一 Agent 或把同一个 body 再发一次吗？",
+          "origin": "agent_authored_not_real_user_traffic"
+        },
+        {
+          "case_id": "signed-en",
+          "language": "en",
+          "query": "Can a signed host HTTP request be forwarded to another Agent or can I send the same signed body twice?",
+          "origin": "agent_authored_not_real_user_traffic"
+        }
+      ]
+    }
+  ]
+}
